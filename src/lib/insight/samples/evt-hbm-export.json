@@ -1,0 +1,71 @@
+{
+  "canonical_event": {
+    "event_id": "EVT-20260313-001",
+    "title": "미국 BIS, HBM3 이상 對中 수출 전면 차단 정식 발효",
+    "event_type": "policy",
+    "date": "2026-03-13",
+    "source": "U.S. Federal Register + BIS Press Release",
+    "summary": "BIS가 HBM 메모리 대역폭 밀도 2GB/s/mm² 초과 제품의 대중국 수출을 전면 차단. HBM2까지만 허용, HBM3/3E/4 차단. SK하이닉스·삼성·Micron 3사 모두 적용. 별도로 VEU 철회 후 연간 승인제 적용 중."
+  },
+  "representative_news": {
+    "headline": "미국, HBM 수출규제 정식 발효 — 중국향 첨단 메모리 전면 차단",
+    "keyFacts": [
+      "ECCN 3A090.c로 HBM 독립 수출통제 분류 신설",
+      "메모리 대역폭 밀도 2GB/s/mm² 초과 제품 대중국 수출 금지",
+      "HBM2까지 통과, HBM2E부터 차단, HBM3/3E/4 전면 차단",
+      "SK하이닉스, 삼성, Micron 3사 모두 적용",
+      "VEU 철회 후 연간 장비 승인제로 전환 (2025년 8월)",
+      "중국 공장 확장·업그레이드용 장비 반입 불허",
+      "SK하이닉스 2026년 HBM 물량 이미 비중국 고객에 완판"
+    ]
+  },
+  "portfolio": [
+    { "company": "SK hynix", "ticker": "000660.KS", "held": "held" },
+    { "company": "Samsung Electronics", "ticker": "005930.KS", "held": "held" },
+    { "company": "NVIDIA", "ticker": "NVDA", "held": "held" },
+    { "company": "Micron", "ticker": "MU", "held": "held" },
+    { "company": "Hanmi Semiconductor", "ticker": "042700.KS", "held": "watchlist" },
+    { "company": "TSMC", "ticker": "TSM", "held": "watchlist" },
+    { "company": "HPSP", "ticker": "403870.KS", "held": "watchlist" },
+    { "company": "Soulbrain", "ticker": "357780.KS", "held": "watchlist" }
+  ],
+  "web_search_facts": [
+    "SK하이닉스 HBM 시장 점유율 57% (2025 Q3 매출 기준)",
+    "SK하이닉스 2025년 영업이익 47조원, HBM이 DRAM 매출의 40% 이상",
+    "SK하이닉스 2026년 HBM 물량 완판 상태",
+    "삼성 HBM 점유율 22% → 35% 확대 전망",
+    "SK하이닉스 우시 공장: 전체 DRAM 생산의 30% 이상 담당",
+    "VEU 철회 후 연간 승인제로 전환, 2026년분 승인 완료",
+    "중국 공장 확장·고도화 장비 반입은 사실상 불허",
+    "TSMC CoWoS 패키징이 현재 AI 가속기 출하의 binding constraint",
+    "HBM 시장 규모: 2025 약 $35B → 2028 약 $100B 전망"
+  ],
+  "structured_market_data": {
+    "SK_hynix_daily_return": -4.2,
+    "Samsung_daily_return": -2.8,
+    "Micron_daily_return": -1.5,
+    "NVIDIA_daily_return": -0.8,
+    "Hanmi_Semi_daily_return": 1.2,
+    "TSMC_daily_return": -0.3,
+    "KOSPI_daily_return": -1.8,
+    "USDKRW_change": 0.6
+  },
+  "entities": [
+    { "type": "institution", "name": "BIS (Bureau of Industry and Security)" },
+    { "type": "policy", "name": "ECCN 3A090.c" },
+    { "type": "policy", "name": "VEU removal" },
+    { "type": "product", "name": "HBM3" },
+    { "type": "product", "name": "HBM3E" },
+    { "type": "product", "name": "HBM4" },
+    { "type": "facility", "name": "SK hynix Wuxi (DRAM)" },
+    { "type": "facility", "name": "Samsung Xi'an (NAND)" },
+    { "type": "sector", "name": "AI Memory Chain" }
+  ],
+  "additional_context": [
+    "2023.10 HBM 1차 규제 시 SK하이닉스 -4.2%(2일) → 2주 내 회복 (비중국 대체 확인 후)",
+    "2022.10 포괄 규제 시 SK하이닉스 -8% → 3개월 내 회복 (VEU 예외 확보)",
+    "이번에는 VEU 자체가 철회됨 — 이전 선례와의 핵심 차이",
+    "HBM은 AI 칩의 핵심 부품. NVIDIA GPU든 Google TPU든 HBM 없이 작동 불가",
+    "현재 AI 가속기 출하의 binding constraint는 HBM이 아니라 TSMC CoWoS 패키징"
+  ]
+}

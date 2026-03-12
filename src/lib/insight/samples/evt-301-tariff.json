@@ -1,0 +1,67 @@
+{
+  "canonical_event": {
+    "event_id": "EVT-20260312-001",
+    "title": "미국, 한중일 등 상대 무역법 301조 조사 개시 — 과잉생산 사유",
+    "event_type": "policy",
+    "date": "2026-03-12",
+    "source": "USTR 관보 공지 + 연합뉴스",
+    "summary": "USTR이 한국, 중국, 일본, 대만, EU, 인도 등을 상대로 301조 조사 개시. 반도체, 배터리, 자동차, 철강, 선박 등 20개 산업 대상. 7월 글로벌 관세 만료 전 결론 목표. USTR 대표: 수단은 바뀌지만 정책은 동일. 기존 무역합의(한국 15%) 유지 발언."
+  },
+  "representative_news": {
+    "headline": "美 전쟁중에도 관세는 논스톱…한중일등에 7월前 '301조관세' 예상",
+    "keyFacts": [
+      "과잉생산 + 강제노동 두 가지 사유로 조사 개시",
+      "대상 산업: 반도체, 배터리, 자동차, 철강, 선박, 태양광 등 20개",
+      "대상국: 한국, 중국, 일본, 대만, EU, 인도",
+      "글로벌관세(10%) 7월 만료 전 결론 목표",
+      "3/17 의견접수 → 4/15 마감 → 5/5 공청회",
+      "기존 무역합의 유지 — 한국 15% 수준 예상",
+      "추가 301조 조사도 예고 (디지털세, 의약품, 수산물 등)",
+      "연방대법원이 IEEPA 기반 상호관세를 지난달 무효화한 상태"
+    ]
+  },
+  "portfolio": [
+    { "company": "SK hynix", "ticker": "000660.KS", "held": "held" },
+    { "company": "Samsung Electronics", "ticker": "005930.KS", "held": "held" },
+    { "company": "NVIDIA", "ticker": "NVDA", "held": "held" },
+    { "company": "Hyundai Motor", "ticker": "005380.KS", "held": "held" },
+    { "company": "LG Energy Solution", "ticker": "373220.KS", "held": "watchlist" },
+    { "company": "HD Korea Shipbuilding", "ticker": "329180.KS", "held": "watchlist" },
+    { "company": "Hanmi Semiconductor", "ticker": "042700.KS", "held": "watchlist" }
+  ],
+  "web_search_facts": [
+    "301조는 1974년 무역법에 근거, IEEPA보다 법적 권한이 명확",
+    "2018년 중국 대상 첫 301조에서 관세+CFIUS 투자심사+수출통제 복합 조치",
+    "2018년 301조 관세는 바이든·트럼프 2기 행정부에서도 유지 중",
+    "현대차 조지아 공장 가동 중, LG엔솔 미시간/오하이오 공장 가동 중",
+    "한국은 이미 15% 상호관세 환경을 2025년에 경험",
+    "USTR 대표: 추가 301조 조사도 예상, 디지털세·의약품·수산물 등"
+  ],
+  "structured_market_data": {
+    "KOSPI_daily_return": -0.8,
+    "USDKRW_change": 0.3,
+    "SK_hynix_daily_return": -0.5,
+    "Samsung_daily_return": -1.2,
+    "Hyundai_Motor_daily_return": -2.1,
+    "HD_Shipbuilding_daily_return": -3.4,
+    "NVIDIA_daily_return": 0.2,
+    "SP500_daily_return": -0.1
+  },
+  "entities": [
+    { "type": "country", "name": "United States" },
+    { "type": "country", "name": "South Korea" },
+    { "type": "country", "name": "China" },
+    { "type": "institution", "name": "USTR" },
+    { "type": "policy", "name": "Section 301" },
+    { "type": "policy", "name": "IEEPA" },
+    { "type": "sector", "name": "Semiconductors" },
+    { "type": "sector", "name": "Automotive" },
+    { "type": "sector", "name": "Battery" },
+    { "type": "sector", "name": "Shipbuilding" }
+  ],
+  "additional_context": [
+    "연방대법원이 지난달 IEEPA 기반 상호관세를 '권한 남용'으로 무효화",
+    "301조는 IEEPA 무효화의 빈 자리를 법적으로 더 견고한 근거로 메우는 것",
+    "IRA(인플레이션감축법)가 미국 내 배터리 생산 보조금을 제공 중 — 301조 관세와 충돌 가능"
+  ]
+}
