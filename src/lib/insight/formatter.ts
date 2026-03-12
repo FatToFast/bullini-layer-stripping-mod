@@ -8,13 +8,14 @@ export function formatAsMarkdown(output: FinalOutput): string {
   const parts: string[] = [];
 
   parts.push(`## One-Line Take\n\n${output.oneLineTake}\n`);
-  parts.push(`## Analyst Note\n\n${output.analystNote}\n`);
+  parts.push(`## Structural Read\n\n${output.structuralRead}\n`);
 
-  if (output.factBox.length > 0) {
-    parts.push(`## Fact Box\n`);
-    for (const fact of output.factBox) {
-      const statusTag = fact.status === "verified" ? "\u2713" : "\u26A0";
-      parts.push(`- ${statusTag} ${fact.statement} (${fact.source}, ${fact.asOf})`);
+  if (output.portfolioImpactTable.length > 0) {
+    parts.push("## Portfolio Impact");
+    for (const row of output.portfolioImpactTable) {
+      parts.push(
+        `- ${row.company} [${row.held}] ${row.exposureType}: ${row.whatChangesToday} / ${row.action} (${row.confidence})`
+      );
     }
     parts.push("");
   }
@@ -23,24 +24,21 @@ export function formatAsMarkdown(output: FinalOutput): string {
 }
 
 export function formatAsPlainText(output: FinalOutput): string {
-  if (output.plainTextOutput) {
-    return output.plainTextOutput;
-  }
-
   const parts: string[] = [];
 
   parts.push(`[One-Line Take]`);
   parts.push(output.oneLineTake);
   parts.push("");
-  parts.push(`[Analyst Note]`);
-  parts.push(output.analystNote);
+  parts.push(`[Structural Read]`);
+  parts.push(output.structuralRead);
   parts.push("");
 
-  if (output.factBox.length > 0) {
-    parts.push(`[Fact Box]`);
-    for (const fact of output.factBox) {
-      const statusTag = fact.status === "verified" ? "[V]" : "[?]";
-      parts.push(`${statusTag} ${fact.statement} (${fact.source}, ${fact.asOf})`);
+  if (output.portfolioImpactTable.length > 0) {
+    parts.push(`[Portfolio Impact]`);
+    for (const row of output.portfolioImpactTable) {
+      parts.push(
+        `- ${row.company} [${row.held}] ${row.exposureType}: ${row.whatChangesToday} / ${row.action} (${row.confidence})`
+      );
     }
   }
 

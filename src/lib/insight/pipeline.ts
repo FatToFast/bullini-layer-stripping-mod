@@ -1,4 +1,13 @@
-import type { InsightDataset, StageRecord, InsightRunResult, FinalOutput, StageModelOverrides, PipelineEvent } from "./types";
+import type {
+  FinalOutput,
+  InsightDataset,
+  InsightRunResult,
+  InsightStageName,
+  ModelConfigOverride,
+  PipelineEvent,
+  PipelineModelSettings,
+  StageRecord,
+} from "./types";
 import { normalizeRawInput } from "./normalizers";
 import { runStage } from "./stage-runner";
 import { getSearchProvider, searchWithRetry, type SearchFact } from "@/lib/providers/search";
@@ -17,24 +26,44 @@ import {
   STEP9_PROMPT,
 } from "./prompts";
 
-function llmCall(stepPrompt: string, userContent: string, model?: string, maxTokens?: number) {
+function llmCall(stepPrompt: string, userContent: string, config?: ModelConfigOverride) {
   return callLLM(SYSTEM_PROMPT + "\n\n" + stepPrompt, userContent, {
-    ...(model ? { model } : {}),
-    ...(maxTokens ? { maxTokens } : {}),
+    ...(config?.model ? { model: config.model } : {}),
+    ...(config?.temperature !== undefined ? { temperature: config.temperature } : {}),
+    ...(config?.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
   });
 }
 
 export async function runInsightPipeline(
   rawJson: string,
   options?: {
-    modelOverrides?: StageModelOverrides;
+    modelSettings?: PipelineModelSettings;
     onEvent?: (event: PipelineEvent) => void;
   }
 ): Promise<InsightRunResult> {
   const runId = `run-${Date.now()}`;
   const stages: StageRecord[] = [];
   const emit = options?.onEvent ?? (() => {});
-  const mo = options?.modelOverrides;
+  const modelSettings = options?.modelSettings;
+
+  function resolveStageConfig(stageName: InsightStageName, fallbackMaxTokens?: number): ModelConfigOverride {
+    const stageConfig = modelSettings?.stages?.[stageName];
+    const defaultConfig = modelSettings?.defaults;
+
+    return {
+      ...(defaultConfig?.model ? { model: defaultConfig.model } : {}),
+      ...(defaultConfig?.temperature !== undefined ? { temperature: defaultConfig.temperature } : {}),
+      ...(defaultConfig?.maxTokens !== undefined ? { maxTokens: defaultConfig.maxTokens } : {}),
+      ...(stageConfig?.model ? { model: stageConfig.model } : {}),
+      ...(stageConfig?.temperature !== undefined ? { temperature: stageConfig.temperature } : {}),
+      ...(stageConfig?.maxTokens !== undefined ? { maxTokens: stageConfig.maxTokens } : {}),
+      ...(fallbackMaxTokens !== undefined &&
+      stageConfig?.maxTokens === undefined &&
+      defaultConfig?.maxTokens === undefined
+        ? { maxTokens: fallbackMaxTokens }
+        : {}),
+    };
+  }
 
   // ── Step 0: Input Validation ──
   emit({ type: "stage_start", stage: "input_validation" });
@@ -75,7 +104,7 @@ export async function runInsightPipeline(
     emit({ type: "stage_start", stage: stageName });
     const record = await runStage(
       { stageName, input, searchResults: extra?.searchResults, prompt },
-      async () => llmCall(prompt, userContent, mo?.[stageName], extra?.maxTokens)
+      async () => llmCall(prompt, userContent, resolveStageConfig(stageName, extra?.maxTokens))
     );
     stages.push(record);
     emit({ type: "stage_complete", record });

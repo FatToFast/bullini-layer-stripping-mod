@@ -1,7 +1,13 @@
-import type { InsightRunResult, StageModelOverrides, PipelineEvent, StageRecord } from "./types";
+import type {
+  InsightRunResult,
+  InsightStageName,
+  PipelineModelSettings,
+  PipelineEvent,
+  StageRecord,
+} from "./types";
 
 export type StreamCallbacks = {
-  onStageStart?: (stage: string) => void;
+  onStageStart?: (stage: InsightStageName) => void;
   onStageComplete?: (record: StageRecord) => void;
   onSearchStart?: (round: 1 | 2, queries: string[]) => void;
   onSearchComplete?: (round: 1 | 2, results: unknown[], error?: string) => void;
@@ -11,13 +17,13 @@ export type StreamCallbacks = {
 
 export async function runInsightApiStream(
   rawJson: string,
-  modelOverrides?: StageModelOverrides,
+  modelSettings?: PipelineModelSettings,
   callbacks?: StreamCallbacks
 ): Promise<InsightRunResult> {
   const response = await fetch("/api/insight/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rawJson, modelOverrides }),
+    body: JSON.stringify({ rawJson, modelSettings }),
   });
 
   if (!response.ok) {
@@ -51,7 +57,7 @@ export async function runInsightApiStream(
 
         switch (eventType) {
           case "stage_start":
-            callbacks?.onStageStart?.(event.stage as string);
+            callbacks?.onStageStart?.(event.stage as InsightStageName);
             break;
           case "stage_complete":
             callbacks?.onStageComplete?.(event.record as StageRecord);

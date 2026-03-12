@@ -123,7 +123,14 @@ export type ModelConfig = {
   maxTokens: number;
 };
 
-export type StageModelOverrides = Partial<Record<InsightStageName, string>>;
+export type ModelConfigOverride = Partial<ModelConfig>;
+
+export type StageModelOverrides = Partial<Record<InsightStageName, ModelConfigOverride>>;
+
+export type PipelineModelSettings = {
+  defaults?: ModelConfigOverride;
+  stages?: StageModelOverrides;
+};
 
 export type SearchEvent = {
   type: "search_start" | "search_complete";
