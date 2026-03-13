@@ -1,5 +1,5 @@
 import { runInsightPipeline } from "@/lib/insight/pipeline";
-import type { CachedStageResults, InsightStageName, PipelineEvent, PipelineModelSettings } from "@/lib/insight/types";
+import type { CachedStageResults, InsightStageName, PipelineEvent, PipelineModelSettings, SearchRoundConfig } from "@/lib/insight/types";
 import type { SearchProviderKind } from "@/lib/providers/search";
 
 export const runtime = "nodejs";
@@ -12,6 +12,8 @@ type RequestBody = {
   targetStage?: InsightStageName;
   cachedResults?: CachedStageResults;
   systemPrompt?: string;
+  searchR1Config?: SearchRoundConfig;
+  searchR2Config?: SearchRoundConfig;
 };
 
 function toSsePayload(event: PipelineEvent | { type: "error"; message: string }) {
@@ -43,6 +45,8 @@ export async function POST(request: Request) {
             targetStage: body.targetStage,
             cachedResults: body.cachedResults,
             systemPrompt: body.systemPrompt || undefined,
+            searchR1Config: body.searchR1Config,
+            searchR2Config: body.searchR2Config,
             onEvent: (event) => controller.enqueue(encoder.encode(toSsePayload(event))),
           });
         } catch (error) {

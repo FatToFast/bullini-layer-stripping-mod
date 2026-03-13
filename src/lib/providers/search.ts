@@ -7,7 +7,7 @@ export type SearchFact = {
   publishedAt?: string;
 };
 
-export type SearchProviderKind = "noop" | "duckduckgo" | "tavily" | "naver";
+export type SearchProviderKind = "noop" | "duckduckgo" | "tavily" | "naver" | "perplexity";
 
 export type SearchProvider = {
   kind: SearchProviderKind;
@@ -72,8 +72,8 @@ function flattenTopics(topics: DuckDuckGoTopic[]): DuckDuckGoTopic[] {
 
 export function getSearchProvider(kind?: SearchProviderKind): SearchProvider {
   const resolved = kind ?? (process.env.SEARCH_PROVIDER || "noop").toLowerCase();
-  if (resolved === "tavily" || resolved === "duckduckgo" || resolved === "naver") {
-    return { kind: resolved };
+  if (resolved === "tavily" || resolved === "duckduckgo" || resolved === "naver" || resolved === "perplexity") {
+    return { kind: resolved as SearchProviderKind };
   }
   return { kind: "noop" };
 }
@@ -84,6 +84,7 @@ export function getAvailableProviders(): AvailableSearchProvider[] {
     { kind: "tavily", label: "Tavily", configured: !!process.env.TAVILY_API_KEY },
     { kind: "naver", label: "Naver News", configured: !!(process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET) },
     { kind: "duckduckgo", label: "DuckDuckGo", configured: true },
+    { kind: "perplexity", label: "Perplexity Sonar", configured: !!(process.env.PERPLEXITY_API_KEY || process.env.OPENROUTER_API_KEY) },
   ];
 }
 
@@ -204,6 +205,82 @@ async function searchNaverNews(query: string): Promise<SearchFact[]> {
   }));
 }
 
+type PerplexitySearchResult = {
+  title: string;
+  url: string;
+  snippet: string;
+  date?: string;
+};
+
+type PerplexityRawResponse = {
+  search_results?: PerplexitySearchResult[];
+  citations?: string[];
+  choices?: Array<{ message?: { content?: string } }>;
+};
+
+async function searchPerplexity(query: string): Promise<SearchFact[]> {
+  const directKey = process.env.PERPLEXITY_API_KEY;
+  const openRouterKey = process.env.OPENROUTER_API_KEY;
+
+  if (!directKey && !openRouterKey) {
+    throw new Error("PERPLEXITY_API_KEY or OPENROUTER_API_KEY is required for Perplexity search");
+  }
+
+  const baseURL = directKey ? "https://api.perplexity.ai" : "https://openrouter.ai/api/v1";
+  const apiKey = directKey ?? openRouterKey!;
+  const model = directKey ? "sonar" : "perplexity/sonar";
+
+  const response = await fetch(`${baseURL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+      ...(directKey ? {} : {
+        "HTTP-Referer": "http://127.0.0.1:3000",
+        "X-Title": "Bullini Layer Stripping",
+      }),
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: query }],
+      ...(directKey ? {
+        web_search_options: { search_context_size: "low" },
+        search_recency_filter: "month",
+      } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`Perplexity search failed (${response.status}): ${errorBody.slice(0, 200)}`);
+  }
+
+  const raw = (await response.json()) as PerplexityRawResponse;
+
+  if (raw.search_results && raw.search_results.length > 0) {
+    return raw.search_results.map((r) => ({
+      query,
+      title: r.title,
+      url: r.url,
+      snippet: r.snippet || "",
+      source: "Perplexity",
+      publishedAt: r.date,
+    }));
+  }
+
+  if (raw.citations && raw.citations.length > 0) {
+    return raw.citations.map((url, idx) => ({
+      query,
+      title: `Citation ${idx + 1}`,
+      url,
+      snippet: raw.choices?.[0]?.message?.content?.slice(0, 200) ?? "",
+      source: "Perplexity",
+    }));
+  }
+
+  return [];
+}
+
 export async function searchWithRetry(provider: SearchProvider, query: string, retries = 1): Promise<SearchFact[]> {
   if (provider.kind === "noop") {
     return [];
@@ -213,7 +290,9 @@ export async function searchWithRetry(provider: SearchProvider, query: string, r
     ? searchTavily
     : provider.kind === "naver"
       ? searchNaverNews
-      : searchDuckDuckGo;
+      : provider.kind === "perplexity"
+        ? searchPerplexity
+        : searchDuckDuckGo;
 
   let lastError: unknown;
 

@@ -3,6 +3,7 @@ import type { InsightStageName, StageRecord } from "./types";
 export type StageInput = {
   stageName: InsightStageName;
   input: unknown;
+  userContent?: string;
   searchResults?: unknown[];
   prompt?: string;
 };
@@ -21,6 +22,7 @@ export async function runStage(
       stage: stageInput.stageName,
       status: "success",
       input: stageInput.input,
+      userContent: stageInput.userContent,
       searchResults: stageInput.searchResults,
       prompt: stageInput.prompt,
       output,
@@ -33,6 +35,7 @@ export async function runStage(
       stage: stageInput.stageName,
       status: "error",
       input: stageInput.input,
+      userContent: stageInput.userContent,
       searchResults: stageInput.searchResults,
       prompt: stageInput.prompt,
       elapsedMs,

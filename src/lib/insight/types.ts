@@ -20,6 +20,7 @@ export type StageRecord = {
   stage: InsightStageName;
   status: StageStatus;
   input: unknown;
+  userContent?: string;
   searchResults?: unknown[];
   prompt?: string;
   output?: unknown;
@@ -131,6 +132,13 @@ export type StageModelOverrides = Partial<Record<InsightStageName, ModelConfigOv
 export type PipelineModelSettings = {
   defaults?: ModelConfigOverride;
   stages?: StageModelOverrides;
+};
+
+export type SearchRoundConfig = {
+  prompt?: string;
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
 };
 
 export type SearchEvent = {

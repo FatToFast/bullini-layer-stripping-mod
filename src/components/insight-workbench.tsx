@@ -16,17 +16,24 @@ import {
 } from "@/lib/insight/model-catalog";
 import { STAGE_LABELS, STAGE_DESCRIPTIONS, STAGE_ORDER } from "@/lib/insight/stage-labels";
 import { DEFAULT_STAGE_PROMPTS } from "@/lib/insight/prompts";
+import {
+  SEARCH_R1_DEFAULT_PROMPT,
+  SEARCH_R2_DEFAULT_PROMPT,
+} from "@/lib/insight/search-query-prompts";
 import type {
   CachedStageResults,
   InsightRunResult,
   InsightStageName,
   PipelineModelSettings,
+  SearchRoundConfig,
   StageRecord,
   StageStatus,
   StageEvaluationResult,
 } from "@/lib/insight/types";
 
-type InputMode = "url" | "json";
+/** Tab can be an analysis stage or a search round config */
+type TabId = InsightStageName | "searchR1" | "searchR2";
+
 type ExtractPhase = "idle" | "fetching" | "previewing" | "structuring" | "done" | "error";
 
 type SampleItem = {
@@ -130,7 +137,6 @@ function buildInitialStageConfigs(
 
 export function InsightWorkbench({ defaultModel, providerLabel, searchProviders, defaultSystemPrompt, samples }: Props) {
   const defaultSample = samples[0];
-  const [selectedSample, setSelectedSample] = useState(defaultSample?.key ?? "");
   const [rawJson, setRawJson] = useState(defaultSample?.rawJson ?? "");
   const [commonModel, setCommonModel] = useState(defaultModel);
   const [commonCustomModel, setCommonCustomModel] = useState(isKnownModel(defaultModel) ? "" : defaultModel);
@@ -147,7 +153,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [finalResult, setFinalResult] = useState<InsightRunResult | null>(null);
   const [activeStage, setActiveStage] = useState<InsightStageName | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [inputMode, setInputMode] = useState<InputMode>("url");
   const [newsUrl, setNewsUrl] = useState("");
   const [analysisPrompt, setAnalysisPrompt] = useState(
     "이 뉴스가 내 포트폴리오에 미치는 영향을 분석해주세요."
@@ -158,17 +163,24 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [fetchedText, setFetchedText] = useState<FetchTextResult | null>(null);
   const [inputSnapshotOpen, setInputSnapshotOpen] = useState(false);
   const [runningStage, setRunningStage] = useState<InsightStageName | null>(null);
-  const [activeTab, setActiveTab] = useState<InsightStageName>("layer0_layer1");
+  const [activeTab, setActiveTab] = useState<TabId>("layer0_layer1");
   const [stageEvaluations, setStageEvaluations] = useState<Partial<Record<InsightStageName, StageEvaluationResult>>>({});
   const [evaluatingStage, setEvaluatingStage] = useState<InsightStageName | null>(null);
+  const [searchR1Config, setSearchR1Config] = useState<SearchRoundConfig>({
+    prompt: SEARCH_R1_DEFAULT_PROMPT,
+    model: "",
+    temperature: 0.3,
+    maxTokens: 800,
+  });
+  const [searchR2Config, setSearchR2Config] = useState<SearchRoundConfig>({
+    prompt: SEARCH_R2_DEFAULT_PROMPT,
+    model: "",
+    temperature: 0.3,
+    maxTokens: 800,
+  });
 
   const deferredRawJson = useDeferredValue(rawJson);
   const deferredFinalResult = useDeferredValue(finalResult);
-
-  const sampleLookup = useMemo(
-    () => new Map(samples.map((sample) => [sample.key, sample])),
-    [samples]
-  );
 
   const effectiveCommonModel = getEffectiveModel(commonModel, commonCustomModel);
   const orderedStageRecords = useMemo(
@@ -338,6 +350,12 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     setFetchedText(null);
   }
 
+  function buildSearchConfigs() {
+    const r1 = searchR1Config.prompt || searchR1Config.model ? searchR1Config : undefined;
+    const r2 = searchR2Config.prompt || searchR2Config.model ? searchR2Config : undefined;
+    return r1 || r2 ? { searchR1Config: r1, searchR2Config: r2 } : undefined;
+  }
+
   async function handleRun() {
     setIsRunning(true);
     setError(null);
@@ -403,7 +421,8 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         searchProvider,
         undefined,
         undefined,
-        systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined
+        systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined,
+        buildSearchConfigs()
       );
 
       setFinalResult(result);
@@ -491,7 +510,8 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         searchProvider,
         targetStage,
         buildCachedResults(),
-        systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined
+        systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined,
+        buildSearchConfigs()
       );
 
       if (result?.finalOutput) setFinalResult(result);
@@ -525,14 +545,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       setStageEvaluations((prev) => ({ ...prev, [stage]: result }));
     }
     setEvaluatingStage(null);
-  }
-
-  function handleSampleChange(sampleKey: string) {
-    const next = sampleLookup.get(sampleKey);
-    if (!next) return;
-    setSelectedSample(sampleKey);
-    setRawJson(next.rawJson);
-    setError(null);
   }
 
   return (
@@ -571,25 +583,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             공통 설정을 기준으로 전체 단계를 돌리고, 필요한 단계만 별도 모델 프로필을 씌울 수 있습니다.
           </p>
 
-          <div className="inputModeTabs">
-            <button
-              type="button"
-              className={`inputModeTab ${inputMode === "url" ? "inputModeTabActive" : ""}`}
-              onClick={() => setInputMode("url")}
-            >
-              URL Analysis
-            </button>
-            <button
-              type="button"
-              className={`inputModeTab ${inputMode === "json" ? "inputModeTabActive" : ""}`}
-              onClick={() => setInputMode("json")}
-            >
-              JSON Direct Input
-            </button>
-          </div>
-
-          {inputMode === "url" ? (
-            <div className="urlAnalysisForm">
+          <div className="urlAnalysisForm">
               <div className="configCard">
                 <label className="fieldShell">
                   <span className="fieldLabel">News URL</span>
@@ -676,33 +670,8 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                     Reset
                   </button>
                 ) : null}
-                {extractPhase === "done" ? (
-                  <button
-                    type="button"
-                    className="secondaryButton"
-                    onClick={() => setInputMode("json")}
-                  >
-                    View Full JSON
-                  </button>
-                ) : null}
               </div>
             </div>
-          ) : null}
-
-          {inputMode === "json" ? (
-          <div className="sampleList">
-            {samples.map((sample) => (
-              <button
-                key={sample.key}
-                type="button"
-                className={`sampleButton ${selectedSample === sample.key ? "sampleButtonActive" : ""}`}
-                onClick={() => handleSampleChange(sample.key)}
-              >
-                {sample.label}
-              </button>
-            ))}
-          </div>
-          ) : null}
 
           <div className="searchProviderRow">
             <label className="fieldShell">
@@ -872,20 +841,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             ) : null}
           </div>
 
-          {inputMode === "json" ? (
-            <div className="fieldGrid">
-              <label>
-                <span className="fieldLabel">Raw JSON Input</span>
-                <textarea
-                  className="jsonInput"
-                  value={rawJson}
-                  onChange={(event) => setRawJson(event.target.value)}
-                  spellCheck={false}
-                />
-              </label>
-            </div>
-          ) : null}
-
           <div className="actions">
             <button
               type="button"
@@ -895,16 +850,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             >
               {isRunning ? "Running..." : "Run Pipeline"}
             </button>
-            {inputMode === "json" ? (
-              <button
-                type="button"
-                className="secondaryButton"
-                onClick={() => setRawJson(defaultSample?.rawJson ?? "")}
-                disabled={isRunning}
-              >
-                Reset to Default Sample
-              </button>
-            ) : null}
             <span className="statusLine">
               {activeStage
                 ? `Active stage: ${STAGE_LABELS[activeStage]}`
@@ -959,13 +904,20 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               <div key={node.id} className="diagramNodeWrap">
                 <button
                   type="button"
-                  className={`diagramNode diagramNode-${node.kind} diagramNode-${getNodeStatus(node)} ${node.stage && activeTab === node.stage ? "diagramNodeActive" : ""}`}
+                  className={`diagramNode diagramNode-${node.kind} diagramNode-${getNodeStatus(node)} ${
+                    (node.stage && activeTab === node.stage) ||
+                    (node.kind === "search" && activeTab === (node.searchRound === 1 ? "searchR1" : "searchR2"))
+                      ? "diagramNodeActive"
+                      : ""
+                  }`}
                   onClick={() => {
                     if (node.stage && node.stage !== "input_validation") {
                       setActiveTab(node.stage);
+                    } else if (node.kind === "search") {
+                      setActiveTab(node.searchRound === 1 ? "searchR1" : "searchR2");
                     }
                   }}
-                  disabled={node.kind === "search" || node.stage === "input_validation"}
+                  disabled={node.stage === "input_validation"}
                 >
                   <span className="diagramNodeShort">{node.short}</span>
                   <span className="diagramNodeLabel">{node.label}</span>
@@ -993,6 +945,22 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 </button>
               );
             })}
+            <button
+              type="button"
+              className={`stageTab stageTabSearch ${activeTab === "searchR1" ? "stageTabActive" : ""} ${searchRounds.find((r) => r.round === 1 && r.results.length > 0) ? "stageTabDone" : ""}`}
+              onClick={() => setActiveTab("searchR1")}
+            >
+              <span className="stageTabNum">🔍</span>
+              <span className="stageTabName">Search R1</span>
+            </button>
+            <button
+              type="button"
+              className={`stageTab stageTabSearch ${activeTab === "searchR2" ? "stageTabActive" : ""} ${searchRounds.find((r) => r.round === 2 && r.results.length > 0) ? "stageTabDone" : ""}`}
+              onClick={() => setActiveTab("searchR2")}
+            >
+              <span className="stageTabNum">🔍</span>
+              <span className="stageTabName">Search R2</span>
+            </button>
           </div>
 
           {tunedStages.map((stage) => {
@@ -1154,7 +1122,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   </div>
 
                   <div className="stageTabPanelCol">
-                    <h4 className="stageTabSubhead">Result</h4>
+                    <h4 className="stageTabSubhead">Execution Flow</h4>
                     {record ? (
                       <>
                         {record.error ? <p className="errorText">{record.error}</p> : null}
@@ -1162,7 +1130,43 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                           {typeof record.elapsedMs === "number" ? <span>{record.elapsedMs} ms</span> : null}
                           {record.searchResults ? <span>search facts {record.searchResults.length}</span> : null}
                         </div>
-                        <pre className="codeBlock stageResultBlock">{prettyJson(record.output ?? record.input)}</pre>
+
+                        <details className="stageFlowBlock">
+                          <summary className="stageFlowSummary">
+                            <span className="stageFlowLabel">① LLM System Prompt</span>
+                            <span className="stageFlowMeta">{(systemPrompt + "\n\n" + (record.prompt || DEFAULT_STAGE_PROMPTS[stage])).length.toLocaleString()} chars</span>
+                          </summary>
+                          <pre className="codeBlock stageResultBlock">{systemPrompt + "\n\n" + (record.prompt || DEFAULT_STAGE_PROMPTS[stage])}</pre>
+                        </details>
+
+                        <details className="stageFlowBlock">
+                          <summary className="stageFlowSummary">
+                            <span className="stageFlowLabel">② LLM User Input</span>
+                            <span className="stageFlowMeta">
+                              {record.userContent
+                                ? `${record.userContent.length.toLocaleString()} chars`
+                                : "not captured"}
+                            </span>
+                          </summary>
+                          {record.userContent ? (
+                            <pre className="codeBlock stageResultBlock">{(() => {
+                              try { return prettyJson(JSON.parse(record.userContent)); }
+                              catch { return record.userContent; }
+                            })()}</pre>
+                          ) : (
+                            <pre className="codeBlock stageResultBlock">{prettyJson(record.input)}</pre>
+                          )}
+                        </details>
+
+                        <div className="stageFlowBlock stageFlowBlockOpen">
+                          <div className="stageFlowSummary">
+                            <span className="stageFlowLabel">③ LLM Output</span>
+                            <span className="stageFlowMeta">
+                              {record.output ? `${JSON.stringify(record.output).length.toLocaleString()} chars` : "—"}
+                            </span>
+                          </div>
+                          <pre className="codeBlock stageResultBlock">{prettyJson(record.output ?? record.input)}</pre>
+                        </div>
 
                         {record.status === "success" && record.output ? (
                           <div className="stageEvalSection">
@@ -1213,6 +1217,208 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               </div>
             );
           })}
+
+          {activeTab === "searchR1" ? (
+            <div className="stageTabPanel searchTabPanel">
+              <div className="stageTabPanelHeader">
+                <div>
+                  <h3 className="sectionTitle">Search Round 1 — Pre-Analysis</h3>
+                  <p className="panelLead">파이프라인 시작 전 컨텍스트 수집을 위한 웹 검색 쿼리를 LLM으로 생성합니다.</p>
+                </div>
+                <div className="stageTabPanelActions">
+                  {(() => {
+                    const sr = searchRounds.find((r) => r.round === 1);
+                    if (sr?.error) return <span className="statusBadge status-error">Error</span>;
+                    if (sr?.results.length) return (
+                      <span className="statusBadge status-success">{sr.results.length} results · {sr.queries.length} queries</span>
+                    );
+                    return null;
+                  })()}
+                </div>
+              </div>
+              <div className="stageTabPanelGrid">
+                <div className="stageTabPanelCol">
+                  <h4 className="stageTabSubhead">Query Generation Settings</h4>
+                  <div className="stageSettingsCompact">
+                    <span className="summaryPill">{searchR1Config.model || effectiveCommonModel}</span>
+                    <span className="summaryPill">temp {(searchR1Config.temperature ?? 0.3).toFixed(1)}</span>
+                    <span className="summaryPill">tokens {searchR1Config.maxTokens ?? 800}</span>
+                  </div>
+                  <div className="overrideFields">
+                    <label className="fieldShell">
+                      <span className="fieldLabel">Model (empty = Common)</span>
+                      <select
+                        className="selectInput"
+                        value={searchR1Config.model || ""}
+                        onChange={(e) => setSearchR1Config((prev) => ({ ...prev, model: e.target.value }))}
+                      >
+                        <option value="">Use Common Model</option>
+                        {MODEL_GROUPS.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.options.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="fieldShell">
+                      <span className="fieldLabel">Temperature</span>
+                      <div className="rangeRow">
+                        <input type="range" min="0" max="1.5" step="0.1" value={searchR1Config.temperature ?? 0.3}
+                          onChange={(e) => setSearchR1Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
+                        <input type="number" min="0" max="1.5" step="0.1" className="textInput" value={searchR1Config.temperature ?? 0.3}
+                          onChange={(e) => setSearchR1Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
+                      </div>
+                    </label>
+                    <label className="fieldShell">
+                      <span className="fieldLabel">Max Tokens</span>
+                      <input type="number" min="256" max="4000" step="100" className="textInput" value={searchR1Config.maxTokens ?? 800}
+                        onChange={(e) => setSearchR1Config((prev) => ({ ...prev, maxTokens: Number(e.target.value) }))} />
+                    </label>
+                  </div>
+                  <label className="fieldShell promptFieldShell">
+                    <div className="promptLabelRow">
+                      <span className="fieldLabel">Query Generation Prompt</span>
+                      {searchR1Config.prompt !== SEARCH_R1_DEFAULT_PROMPT ? (
+                        <button type="button" className="miniButton"
+                          onClick={() => setSearchR1Config((prev) => ({ ...prev, prompt: SEARCH_R1_DEFAULT_PROMPT }))}>
+                          Reset Prompt
+                        </button>
+                      ) : null}
+                    </div>
+                    <textarea className="promptInput" value={searchR1Config.prompt ?? ""} spellCheck={false} rows={6}
+                      onChange={(e) => setSearchR1Config((prev) => ({ ...prev, prompt: e.target.value }))} />
+                  </label>
+                </div>
+                <div className="stageTabPanelCol">
+                  <h4 className="stageTabSubhead">Search Results</h4>
+                  {(() => {
+                    const sr = searchRounds.find((r) => r.round === 1);
+                    if (!sr) return <p className="panelLead">검색 결과가 아직 없습니다. 파이프라인을 실행하면 결과가 여기에 표시됩니다.</p>;
+                    return (
+                      <>
+                        {sr.error ? <p className="errorText">{sr.error}</p> : null}
+                        <div className="stageSettingsCompact">
+                          <span className="summaryPill">{sr.queries.length} queries</span>
+                          <span className="summaryPill">{sr.results.length} results</span>
+                        </div>
+                        <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Generated Queries</h5>
+                        <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.queries, null, 2)}</pre>
+                        {sr.results.length > 0 ? (
+                          <>
+                            <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Results</h5>
+                            <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.results, null, 2)}</pre>
+                          </>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {activeTab === "searchR2" ? (
+            <div className="stageTabPanel searchTabPanel">
+              <div className="stageTabPanelHeader">
+                <div>
+                  <h3 className="sectionTitle">Search Round 2 — Counter-Argument</h3>
+                  <p className="panelLead">분석 완료 후 반론과 검증을 위한 검색 쿼리를 생성합니다.</p>
+                </div>
+                <div className="stageTabPanelActions">
+                  {(() => {
+                    const sr = searchRounds.find((r) => r.round === 2);
+                    if (sr?.error) return <span className="statusBadge status-error">Error</span>;
+                    if (sr?.results.length) return (
+                      <span className="statusBadge status-success">{sr.results.length} results · {sr.queries.length} queries</span>
+                    );
+                    return null;
+                  })()}
+                </div>
+              </div>
+              <div className="stageTabPanelGrid">
+                <div className="stageTabPanelCol">
+                  <h4 className="stageTabSubhead">Query Generation Settings</h4>
+                  <div className="stageSettingsCompact">
+                    <span className="summaryPill">{searchR2Config.model || effectiveCommonModel}</span>
+                    <span className="summaryPill">temp {(searchR2Config.temperature ?? 0.3).toFixed(1)}</span>
+                    <span className="summaryPill">tokens {searchR2Config.maxTokens ?? 800}</span>
+                  </div>
+                  <div className="overrideFields">
+                    <label className="fieldShell">
+                      <span className="fieldLabel">Model (empty = Common)</span>
+                      <select
+                        className="selectInput"
+                        value={searchR2Config.model || ""}
+                        onChange={(e) => setSearchR2Config((prev) => ({ ...prev, model: e.target.value }))}
+                      >
+                        <option value="">Use Common Model</option>
+                        {MODEL_GROUPS.map((group) => (
+                          <optgroup key={group.label} label={group.label}>
+                            {group.options.map((opt) => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </optgroup>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="fieldShell">
+                      <span className="fieldLabel">Temperature</span>
+                      <div className="rangeRow">
+                        <input type="range" min="0" max="1.5" step="0.1" value={searchR2Config.temperature ?? 0.3}
+                          onChange={(e) => setSearchR2Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
+                        <input type="number" min="0" max="1.5" step="0.1" className="textInput" value={searchR2Config.temperature ?? 0.3}
+                          onChange={(e) => setSearchR2Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
+                      </div>
+                    </label>
+                    <label className="fieldShell">
+                      <span className="fieldLabel">Max Tokens</span>
+                      <input type="number" min="256" max="4000" step="100" className="textInput" value={searchR2Config.maxTokens ?? 800}
+                        onChange={(e) => setSearchR2Config((prev) => ({ ...prev, maxTokens: Number(e.target.value) }))} />
+                    </label>
+                  </div>
+                  <label className="fieldShell promptFieldShell">
+                    <div className="promptLabelRow">
+                      <span className="fieldLabel">Query Generation Prompt</span>
+                      {searchR2Config.prompt !== SEARCH_R2_DEFAULT_PROMPT ? (
+                        <button type="button" className="miniButton"
+                          onClick={() => setSearchR2Config((prev) => ({ ...prev, prompt: SEARCH_R2_DEFAULT_PROMPT }))}>
+                          Reset Prompt
+                        </button>
+                      ) : null}
+                    </div>
+                    <textarea className="promptInput" value={searchR2Config.prompt ?? ""} spellCheck={false} rows={6}
+                      onChange={(e) => setSearchR2Config((prev) => ({ ...prev, prompt: e.target.value }))} />
+                  </label>
+                </div>
+                <div className="stageTabPanelCol">
+                  <h4 className="stageTabSubhead">Search Results</h4>
+                  {(() => {
+                    const sr = searchRounds.find((r) => r.round === 2);
+                    if (!sr) return <p className="panelLead">검색 결과가 아직 없습니다. 파이프라인을 실행하면 결과가 여기에 표시됩니다.</p>;
+                    return (
+                      <>
+                        {sr.error ? <p className="errorText">{sr.error}</p> : null}
+                        <div className="stageSettingsCompact">
+                          <span className="summaryPill">{sr.queries.length} queries</span>
+                          <span className="summaryPill">{sr.results.length} results</span>
+                        </div>
+                        <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Generated Queries</h5>
+                        <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.queries, null, 2)}</pre>
+                        {sr.results.length > 0 ? (
+                          <>
+                            <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Results</h5>
+                            <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.results, null, 2)}</pre>
+                          </>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          ) : null}
 
           <div className="inlineActions" style={{ marginTop: 8 }}>
             <button type="button" className="miniButton" onClick={applyCommonToAll}>Apply Common To All</button>

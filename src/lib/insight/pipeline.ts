@@ -7,6 +7,7 @@ import type {
   ModelConfigOverride,
   PipelineEvent,
   PipelineModelSettings,
+  SearchRoundConfig,
   StageRecord,
 } from "./types";
 import { normalizeRawInput } from "./normalizers";
@@ -61,6 +62,8 @@ export async function runInsightPipeline(
     targetStage?: InsightStageName;
     cachedResults?: CachedStageResults;
     systemPrompt?: string;
+    searchR1Config?: SearchRoundConfig;
+    searchR2Config?: SearchRoundConfig;
     onEvent?: (event: PipelineEvent) => void;
   }
 ): Promise<InsightRunResult> {
@@ -126,7 +129,7 @@ export async function runInsightPipeline(
     const config = resolveStageConfig(stageName, extra?.maxTokens);
     const effectivePrompt = config.prompt ?? prompt;
     const record = await runStage(
-      { stageName, input, searchResults: extra?.searchResults, prompt: effectivePrompt },
+      { stageName, input, userContent, searchResults: extra?.searchResults, prompt: effectivePrompt },
       async () => llmCall(effectivePrompt, userContent, config)
     );
     stages.push(record);
@@ -169,9 +172,9 @@ export async function runInsightPipeline(
   // ── Pre-search: Round 1 ──
   const searchProviderInstance = getSearchProvider(options?.searchProvider);
   let searchResults1: SearchFact[] = [];
-  const queries1 = generateStep1Queries(dataset);
-  emit({ type: "search_start", round: 1, queries: queries1 });
   try {
+    const queries1 = await generateStep1Queries(dataset, options?.searchR1Config);
+    emit({ type: "search_start", round: 1, queries: queries1 });
     const results = await Promise.all(queries1.map((q) => searchWithRetry(searchProviderInstance, q)));
     searchResults1 = results.flat();
     emit({ type: "search_complete", round: 1, results: searchResults1 });
@@ -309,9 +312,15 @@ export async function runInsightPipeline(
 
   // ── Pre-search: Round 2 (verification) ──
   let searchResults2: SearchFact[] = [];
-  const queries2 = generateStep8Queries(dataset);
-  emit({ type: "search_start", round: 2, queries: queries2 });
   try {
+    const analysisContext = {
+      step1_result: step1.output,
+      step2_result: step2.output,
+      step3_result: step3.output,
+      step7_result: step7.output,
+    };
+    const queries2 = await generateStep8Queries(dataset, analysisContext, options?.searchR2Config);
+    emit({ type: "search_start", round: 2, queries: queries2 });
     const results = await Promise.all(queries2.map((q) => searchWithRetry(searchProviderInstance, q)));
     searchResults2 = results.flat();
     emit({ type: "search_complete", round: 2, results: searchResults2 });

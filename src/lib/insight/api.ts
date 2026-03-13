@@ -3,6 +3,7 @@ import type {
   InsightRunResult,
   InsightStageName,
   PipelineModelSettings,
+  SearchRoundConfig,
   StageRecord,
   EvaluationResult,
   StageEvaluationResult,
@@ -17,6 +18,11 @@ export type StreamCallbacks = {
   onError?: (message: string) => void;
 };
 
+export type SearchConfigs = {
+  searchR1Config?: SearchRoundConfig;
+  searchR2Config?: SearchRoundConfig;
+};
+
 export async function runInsightApiStream(
   rawJson: string,
   modelSettings?: PipelineModelSettings,
@@ -24,12 +30,22 @@ export async function runInsightApiStream(
   searchProvider?: string,
   targetStage?: InsightStageName,
   cachedResults?: CachedStageResults,
-  systemPrompt?: string
+  systemPrompt?: string,
+  searchConfigs?: SearchConfigs,
 ): Promise<InsightRunResult> {
   const response = await fetch("/api/insight/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rawJson, modelSettings, searchProvider, targetStage, cachedResults, systemPrompt: systemPrompt || undefined }),
+    body: JSON.stringify({
+      rawJson,
+      modelSettings,
+      searchProvider,
+      targetStage,
+      cachedResults,
+      systemPrompt: systemPrompt || undefined,
+      searchR1Config: searchConfigs?.searchR1Config,
+      searchR2Config: searchConfigs?.searchR2Config,
+    }),
   });
 
   if (!response.ok) {

@@ -491,6 +491,28 @@ textarea {
   text-overflow: ellipsis;
 }
 
+.stageTabSearch {
+  border-left: 3px solid var(--accent, #3b82f6);
+  background: color-mix(in srgb, var(--accent, #3b82f6) 6%, transparent);
+}
+.stageTabSearch:hover {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 12%, transparent);
+}
+.stageTabSearch.stageTabActive {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 15%, transparent);
+  border-bottom-color: var(--accent, #3b82f6);
+}
+.stageTabSearch .stageTabNum {
+  background: color-mix(in srgb, var(--accent, #3b82f6) 20%, var(--bg-strong));
+  font-size: 0.85rem;
+}
+
+.searchTabPanel .overrideFields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 .stageTabPanel {
   border-top: none;
   padding: 20px 0 0;
@@ -553,6 +575,46 @@ textarea {
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
+}
+
+.stageFlowBlock {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+.stageFlowBlock[open],
+.stageFlowBlockOpen {
+  border-color: color-mix(in srgb, var(--accent, #3b82f6) 40%, var(--border));
+}
+.stageFlowSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-strong);
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.82rem;
+}
+.stageFlowLabel {
+  font-weight: 600;
+  color: var(--fg);
+}
+.stageFlowMeta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stageFlowBlock .codeBlock {
+  margin: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--border);
+  max-height: 400px;
+  overflow-y: auto;
+}
+.stageFlowBlockOpen .codeBlock {
+  max-height: 500px;
 }
 
 .stageSettingsCompact {
@@ -1183,6 +1245,11 @@ textarea {
 .diagramNode-search {
   border-style: dashed;
   background: rgba(91, 78, 158, 0.06);
+  cursor: pointer;
+}
+.diagramNode-search:hover {
+  border-color: var(--accent, #3b82f6);
+  background: rgba(91, 78, 158, 0.12);
 }
 
 .diagramNode-search .diagramNodeShort {

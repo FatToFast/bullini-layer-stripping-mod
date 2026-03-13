@@ -73,9 +73,14 @@ export const MODEL_GROUPS: ModelGroup[] = [
     label: "Fast / Cheap",
     options: [
       {
-        value: "deepseek/deepseek-chat-v3.1",
-        label: "DeepSeek V3.1",
-        note: "비용 효율이 좋은 작업형 모델",
+        value: "deepseek/deepseek-chat-v3-0324",
+        label: "DeepSeek V3",
+        note: "비용 효율이 좋은 작업형 모델 ($0.20/M)",
+      },
+      {
+        value: "deepseek/deepseek-v3.2",
+        label: "DeepSeek V3.2",
+        note: "최신 DeepSeek, 효율적",
       },
       {
         value: "openai/gpt-4.1-nano",
@@ -85,7 +90,42 @@ export const MODEL_GROUPS: ModelGroup[] = [
       {
         value: "google/gemini-2.5-flash-lite",
         label: "Gemini 2.5 Flash-Lite",
-        note: "가벼운 빠른 추론용",
+        note: "가장 저렴한 Gemini ($0.10/M)",
+      },
+      {
+        value: "google/gemini-3-flash-preview",
+        label: "Gemini 3 Flash (preview)",
+        note: "차세대 Gemini Flash 프리뷰",
+      },
+      {
+        value: "google/gemini-3.1-flash-lite-preview",
+        label: "Gemini 3.1 Flash-Lite (preview)",
+        note: "최신 경량 Gemini 프리뷰",
+      },
+    ],
+  },
+  {
+    label: "Search / Grounded",
+    options: [
+      {
+        value: "perplexity/sonar",
+        label: "Perplexity Sonar",
+        note: "웹 검색 내장 ($1/M + $5/1K req). 검색 쿼리 생성에 최적",
+      },
+      {
+        value: "perplexity/sonar-pro",
+        label: "Perplexity Sonar Pro",
+        note: "고품질 검색 내장 ($3/M). 200K 컨텍스트",
+      },
+      {
+        value: "perplexity/sonar-pro-search",
+        label: "Sonar Pro Search (OR-exclusive)",
+        note: "OpenRouter 전용 고급 검색 모드",
+      },
+      {
+        value: "perplexity/sonar-deep-research",
+        label: "Sonar Deep Research",
+        note: "다단계 심층 리서치 ($2/M)",
       },
     ],
   },
