@@ -5,6 +5,7 @@ import type {
   PipelineModelSettings,
   StageRecord,
   EvaluationResult,
+  StageEvaluationResult,
 } from "./types";
 
 export type StreamCallbacks = {
@@ -165,6 +166,39 @@ export async function evaluateOutput(
     }
 
     return { error: "Invalid evaluation response" };
+  } catch (error) {
+    return {
+      error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
+export async function evaluateStage(
+  stagePrompt: string,
+  stageOutput: string,
+  modelSettings?: ExtractModelSettings,
+): Promise<StageEvaluationResult | { error: string }> {
+  try {
+    const response = await fetch("/api/insight/evaluate-stage", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ stagePrompt, stageOutput, modelSettings }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as
+      | (StageEvaluationResult & { error?: string })
+      | { error: string }
+      | null;
+
+    if (!response.ok) {
+      return { error: (payload as { error?: string })?.error ?? `Stage evaluation failed: ${response.status}` };
+    }
+
+    if (payload && "overall_score" in payload && "checklist" in payload) {
+      return payload as StageEvaluationResult;
+    }
+
+    return { error: "Invalid stage evaluation response" };
   } catch (error) {
     return {
       error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}`,

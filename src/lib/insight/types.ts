@@ -161,3 +161,17 @@ export type EvaluationResult = {
 };
 
 export type CachedStageResults = Partial<Record<InsightStageName, unknown>>;
+
+export type StageChecklistItem = {
+  criterion: string;
+  source: "규칙" | "목표" | "스키마" | "기타";
+  verdict: "pass" | "partial" | "fail";
+  score: number;
+  comment: string;
+};
+
+export type StageEvaluationResult = {
+  overall_score: number;
+  summary: string;
+  checklist: StageChecklistItem[];
+};

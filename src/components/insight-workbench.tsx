@@ -5,7 +5,7 @@ import {
   runInsightApiStream,
   fetchArticleText,
   structureWithLlm,
-  evaluateOutput,
+  evaluateStage,
   type ExtractModelSettings,
   type FetchTextResult,
 } from "@/lib/insight/api";
@@ -23,7 +23,7 @@ import type {
   PipelineModelSettings,
   StageRecord,
   StageStatus,
-  EvaluationResult,
+  StageEvaluationResult,
 } from "@/lib/insight/types";
 
 type InputMode = "url" | "json";
@@ -156,12 +156,11 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [extractPhase, setExtractPhase] = useState<ExtractPhase>("idle");
   const [extractError, setExtractError] = useState<string | null>(null);
   const [fetchedText, setFetchedText] = useState<FetchTextResult | null>(null);
-  const [expectedResult, setExpectedResult] = useState("");
-  const [evaluationResult, setEvaluationResult] = useState<EvaluationResult | null>(null);
-  const [isEvaluating, setIsEvaluating] = useState(false);
   const [inputSnapshotOpen, setInputSnapshotOpen] = useState(false);
   const [runningStage, setRunningStage] = useState<InsightStageName | null>(null);
   const [activeTab, setActiveTab] = useState<InsightStageName>("layer0_layer1");
+  const [stageEvaluations, setStageEvaluations] = useState<Partial<Record<InsightStageName, StageEvaluationResult>>>({});
+  const [evaluatingStage, setEvaluatingStage] = useState<InsightStageName | null>(null);
 
   const deferredRawJson = useDeferredValue(rawJson);
   const deferredFinalResult = useDeferredValue(finalResult);
@@ -339,35 +338,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     setFetchedText(null);
   }
 
-  async function runEvaluation(pipelineOutput: string) {
-    if (!expectedResult.trim()) return;
-    setIsEvaluating(true);
-    setEvaluationResult(null);
-    try {
-      const evalResult = await evaluateOutput(
-        pipelineOutput,
-        expectedResult.trim(),
-        {
-          model: effectiveCommonModel,
-          temperature: commonTemperature,
-          maxTokens: commonMaxTokens,
-        }
-      );
-      if ("error" in evalResult) {
-        setError((prev) => prev ? `${prev}\nEvaluation: ${evalResult.error}` : `Evaluation: ${evalResult.error}`);
-      } else {
-        setEvaluationResult(evalResult);
-      }
-    } catch (evalError) {
-      setError((prev) => {
-        const msg = evalError instanceof Error ? evalError.message : "Evaluation failed";
-        return prev ? `${prev}\nEvaluation: ${msg}` : `Evaluation: ${msg}`;
-      });
-    } finally {
-      setIsEvaluating(false);
-    }
-  }
-
   async function handleRun() {
     setIsRunning(true);
     setError(null);
@@ -375,8 +345,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     setStageRecords([]);
     setSearchRounds([]);
     setFinalResult(null);
-    setEvaluationResult(null);
-
     try {
       const result = await runInsightApiStream(
         rawJson,
@@ -439,11 +407,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       );
 
       setFinalResult(result);
-
-      if (result?.finalOutput && expectedResult.trim()) {
-        const outputStr = JSON.stringify(result.finalOutput, null, 2);
-        void runEvaluation(outputStr);
-      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "분석 실행에 실패했습니다.");
     } finally {
@@ -538,6 +501,30 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       setRunningStage(null);
       setActiveStage(null);
     }
+  }
+
+  async function handleEvaluateStage(stage: InsightStageName) {
+    const record = stageRecords.find((r) => r.stage === stage);
+    if (!record?.output) return;
+
+    setEvaluatingStage(stage);
+    const config = stageConfigs[stage];
+    const stagePrompt = config.enabled ? config.prompt : DEFAULT_STAGE_PROMPTS[stage];
+    const fullPrompt = systemPrompt + "\n\n" + stagePrompt;
+    const outputStr = typeof record.output === "string" ? record.output : JSON.stringify(record.output, null, 2);
+
+    const result = await evaluateStage(fullPrompt, outputStr, {
+      model: getEffectiveModel(commonModel, commonCustomModel),
+      temperature: 0.1,
+      maxTokens: 3000,
+    });
+
+    if ("error" in result) {
+      setError(result.error);
+    } else {
+      setStageEvaluations((prev) => ({ ...prev, [stage]: result }));
+    }
+    setEvaluatingStage(null);
   }
 
   function handleSampleChange(sampleKey: string) {
@@ -899,34 +886,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             </div>
           ) : null}
 
-          <div className="configCard evalExpectedCard">
-            <div className="sectionHeader">
-              <div>
-                <h3 className="sectionTitle">Expected Result / 기대 결과</h3>
-                <p className="panelLead">
-                  파이프라인 완료 후 출력물이 이 기준에 부합하는지 LLM이 자동 채점합니다.
-                </p>
-              </div>
-              {expectedResult.trim() ? (
-                <button
-                  type="button"
-                  className="miniButton"
-                  onClick={() => setExpectedResult("")}
-                >
-                  Clear
-                </button>
-              ) : null}
-            </div>
-            <textarea
-              className="promptInput"
-              value={expectedResult}
-              onChange={(event) => setExpectedResult(event.target.value)}
-              placeholder="예: 삼성전자에 대한 포트폴리오 영향도가 direct로 분류되어야 한다. HBM 수출 규제의 리스크가 premortem에 반영되어야 한다..."
-              rows={5}
-              spellCheck={false}
-            />
-          </div>
-
           <div className="actions">
             <button
               type="button"
@@ -946,26 +905,75 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 Reset to Default Sample
               </button>
             ) : null}
-            {deferredFinalResult?.finalOutput && expectedResult.trim() && !isEvaluating ? (
-              <button
-                type="button"
-                className="secondaryButton"
-                onClick={() => {
-                  const outputStr = JSON.stringify(deferredFinalResult.finalOutput, null, 2);
-                  void runEvaluation(outputStr);
-                }}
-              >
-                Re-evaluate
-              </button>
-            ) : null}
             <span className="statusLine">
-              {isEvaluating
-                ? "Evaluating output..."
-                : activeStage
-                  ? `Active stage: ${STAGE_LABELS[activeStage]}`
-                  : "Idle"}
+              {activeStage
+                ? `Active stage: ${STAGE_LABELS[activeStage]}`
+                : "Idle"}
             </span>
           </div>
+        </div>
+
+        <div className="pipelineDiagram">
+          {(() => {
+            type DiagramNode = {
+              id: string;
+              label: string;
+              short: string;
+              kind: "stage" | "search";
+              stage?: InsightStageName;
+              searchRound?: 1 | 2;
+            };
+            const nodes: DiagramNode[] = [
+              { id: "n0", label: "입력 검증", short: "0", kind: "stage", stage: "input_validation" },
+              { id: "s1", label: "Search R1", short: "🔍", kind: "search", searchRound: 1 },
+              { id: "n1", label: "전제 제거", short: "1", kind: "stage", stage: "layer0_layer1" },
+              { id: "n2", label: "분류", short: "2", kind: "stage", stage: "event_classification" },
+              { id: "n3", label: "반대 경로", short: "3", kind: "stage", stage: "layer2_reverse_paths" },
+              { id: "n4", label: "인접 전이", short: "4", kind: "stage", stage: "layer3_adjacent_spillover" },
+              { id: "n5", label: "포트폴리오", short: "5", kind: "stage", stage: "portfolio_impact" },
+              { id: "n6", label: "시간축", short: "6", kind: "stage", stage: "layer4_time_horizon" },
+              { id: "n7", label: "Premortem", short: "7", kind: "stage", stage: "layer5_structural_premortem" },
+              { id: "s2", label: "Search R2", short: "🔍", kind: "search", searchRound: 2 },
+              { id: "n8", label: "팩트 검증", short: "8", kind: "stage", stage: "evidence_consolidation" },
+              { id: "n9", label: "최종 출력", short: "9", kind: "stage", stage: "output_formatting" },
+            ];
+
+            function getNodeStatus(node: DiagramNode): "idle" | "running" | "done" | "error" {
+              if (node.kind === "search") {
+                const sr = searchRounds.find((r) => r.round === node.searchRound);
+                if (!sr) return "idle";
+                if (sr.error) return "error";
+                if (sr.results.length > 0) return "done";
+                return "running";
+              }
+              if (!node.stage) return "idle";
+              const rec = stageRecords.find((r) => r.stage === node.stage);
+              if (!rec) return "idle";
+              if (rec.status === "running") return "running";
+              if (rec.status === "success") return "done";
+              if (rec.status === "error") return "error";
+              return "idle";
+            }
+
+            return nodes.map((node, idx) => (
+              <div key={node.id} className="diagramNodeWrap">
+                <button
+                  type="button"
+                  className={`diagramNode diagramNode-${node.kind} diagramNode-${getNodeStatus(node)} ${node.stage && activeTab === node.stage ? "diagramNodeActive" : ""}`}
+                  onClick={() => {
+                    if (node.stage && node.stage !== "input_validation") {
+                      setActiveTab(node.stage);
+                    }
+                  }}
+                  disabled={node.kind === "search" || node.stage === "input_validation"}
+                >
+                  <span className="diagramNodeShort">{node.short}</span>
+                  <span className="diagramNodeLabel">{node.label}</span>
+                </button>
+                {idx < nodes.length - 1 ? <span className="diagramArrow">→</span> : null}
+              </div>
+            ));
+          })()}
         </div>
 
         <div className="stageTabs">
@@ -1155,6 +1163,47 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                           {record.searchResults ? <span>search facts {record.searchResults.length}</span> : null}
                         </div>
                         <pre className="codeBlock stageResultBlock">{prettyJson(record.output ?? record.input)}</pre>
+
+                        {record.status === "success" && record.output ? (
+                          <div className="stageEvalSection">
+                            <div className="stageEvalHeader">
+                              <button
+                                type="button"
+                                className="evalStageButton"
+                                disabled={evaluatingStage === stage}
+                                onClick={() => handleEvaluateStage(stage)}
+                              >
+                                {evaluatingStage === stage ? "Evaluating..." : "📋 Evaluate Stage"}
+                              </button>
+                              {stageEvaluations[stage] ? (
+                                <span className={`evalScoreBadge ${stageEvaluations[stage]!.overall_score >= 80 ? "evalScoreGood" : stageEvaluations[stage]!.overall_score >= 50 ? "evalScoreOk" : "evalScoreBad"}`}>
+                                  {stageEvaluations[stage]!.overall_score}/100
+                                </span>
+                              ) : null}
+                            </div>
+
+                            {stageEvaluations[stage] ? (
+                              <div className="stageEvalResult">
+                                <p className="evalSummary">{stageEvaluations[stage]!.summary}</p>
+                                <div className="evalChecklist">
+                                  {stageEvaluations[stage]!.checklist.map((item, idx) => (
+                                    <div key={idx} className={`checklistItem checklistItem-${item.verdict}`}>
+                                      <div className="checklistHeader">
+                                        <span className="checklistVerdict">
+                                          {item.verdict === "pass" ? "✅" : item.verdict === "partial" ? "⚠️" : "❌"}
+                                        </span>
+                                        <span className="checklistCriterion">{item.criterion}</span>
+                                        <span className="checklistSource">{item.source}</span>
+                                        <span className="checklistScore">{item.score}</span>
+                                      </div>
+                                      <p className="checklistComment">{item.comment}</p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </>
                     ) : (
                       <p className="panelLead">이 단계는 아직 실행되지 않았습니다. ▶ Run This Stage 로 실행하세요.</p>
@@ -1221,59 +1270,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 {deferredFinalResult?.finalOutput ? "Ready" : "Pending"}
               </span>
             </div>
-
-            {isEvaluating ? (
-              <div className="evalLoadingCard">
-                <span className="statusBadge status-running">Evaluating...</span>
-                <p className="panelLead">LLM이 출력물과 기대 결과를 비교 채점 중입니다.</p>
-              </div>
-            ) : null}
-
-            {evaluationResult ? (
-              <div className="evalScoreCard">
-                <div className="evalScoreHeader">
-                  <div className="evalScoreBig">
-                    <span className="evalScoreNumber">{evaluationResult.score}</span>
-                    <span className="evalScoreMax">/ 100</span>
-                  </div>
-                  <span className={`statusBadge ${
-                    evaluationResult.score >= 80
-                      ? "status-success"
-                      : evaluationResult.score >= 50
-                        ? "status-running"
-                        : "status-error"
-                  }`}>
-                    {evaluationResult.score >= 80
-                      ? "Excellent"
-                      : evaluationResult.score >= 50
-                        ? "Partial"
-                        : "Poor"}
-                  </span>
-                </div>
-                <div className="evalReasoning">{evaluationResult.reasoning}</div>
-                {evaluationResult.breakdown.length > 0 ? (
-                  <div className="evalBreakdown">
-                    {evaluationResult.breakdown.map((item, index) => (
-                      <div key={`eval-${index}-${item.criterion.slice(0, 20)}`} className="evalBreakdownItem">
-                        <div className="evalBreakdownHeader">
-                          <span className="evalCriterion">{item.criterion}</span>
-                          <span className={`evalItemScore ${
-                            item.score >= 80
-                              ? "evalItemScoreGood"
-                              : item.score >= 50
-                                ? "evalItemScoreOk"
-                                : "evalItemScorePoor"
-                          }`}>
-                            {item.score}
-                          </span>
-                        </div>
-                        <div className="evalComment">{item.comment}</div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
 
             {deferredFinalResult?.finalOutput ? (
               <div className="resultGrid">

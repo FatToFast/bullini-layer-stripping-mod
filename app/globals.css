@@ -1124,6 +1124,265 @@ textarea {
   line-height: 1.5;
 }
 
+/* ── Pipeline Flow Diagram ── */
+
+.pipelineDiagram {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 0;
+  padding: 16px 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  margin-bottom: 12px;
+  overflow-x: auto;
+}
+
+.diagramNodeWrap {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.diagramNode {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border);
+  background: var(--bg);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  min-width: 72px;
+}
+
+.diagramNode:disabled {
+  cursor: default;
+}
+
+.diagramNode:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--hover);
+}
+
+.diagramNodeShort {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.diagramNodeLabel {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.diagramNode-search {
+  border-style: dashed;
+  background: rgba(91, 78, 158, 0.06);
+}
+
+.diagramNode-search .diagramNodeShort {
+  font-size: 0.95rem;
+}
+
+.diagramNode-done {
+  border-color: var(--success);
+  background: rgba(31, 106, 78, 0.08);
+}
+
+.diagramNode-done .diagramNodeShort,
+.diagramNode-done .diagramNodeLabel {
+  color: var(--success);
+}
+
+.diagramNode-running {
+  border-color: var(--accent);
+  background: rgba(77, 133, 209, 0.08);
+  animation: diagramPulse 1.2s ease-in-out infinite;
+}
+
+.diagramNode-running .diagramNodeShort,
+.diagramNode-running .diagramNodeLabel {
+  color: var(--accent);
+}
+
+@keyframes diagramPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.diagramNode-error {
+  border-color: var(--danger);
+  background: rgba(159, 45, 32, 0.08);
+}
+
+.diagramNode-error .diagramNodeShort,
+.diagramNode-error .diagramNodeLabel {
+  color: var(--danger);
+}
+
+.diagramNodeActive {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(77, 133, 209, 0.25);
+}
+
+.diagramArrow {
+  font-size: 0.9rem;
+  color: var(--muted);
+  margin: 0 3px;
+  flex-shrink: 0;
+  opacity: 0.5;
+}
+
+/* ── Stage Evaluation Checklist ── */
+
+.stageEvalSection {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.stageEvalHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.evalStageButton {
+  padding: 6px 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.evalStageButton:hover:not(:disabled) {
+  background: var(--hover);
+  border-color: var(--accent);
+}
+
+.evalStageButton:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.evalScoreBadge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 14px;
+  border-radius: 999px;
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.evalScoreGood {
+  background: rgba(31, 106, 78, 0.15);
+  color: var(--success);
+}
+
+.evalScoreOk {
+  background: rgba(143, 91, 0, 0.15);
+  color: var(--warning);
+}
+
+.evalScoreBad {
+  background: rgba(159, 45, 32, 0.15);
+  color: var(--danger);
+}
+
+.stageEvalResult {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.evalSummary {
+  font-size: 0.9rem;
+  color: var(--fg);
+  line-height: 1.55;
+  padding: 8px 12px;
+  background: var(--hover);
+  border-radius: 8px;
+}
+
+.evalChecklist {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.checklistItem {
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+}
+
+.checklistItem-pass {
+  border-left: 3px solid var(--success);
+}
+
+.checklistItem-partial {
+  border-left: 3px solid var(--warning);
+}
+
+.checklistItem-fail {
+  border-left: 3px solid var(--danger);
+}
+
+.checklistHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.checklistVerdict {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+.checklistCriterion {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--fg);
+  flex: 1;
+  min-width: 0;
+}
+
+.checklistSource {
+  font-size: 0.76rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.checklistScore {
+  font-size: 0.82rem;
+  font-weight: 700;
+  min-width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.checklistComment {
+  font-size: 0.84rem;
+  color: var(--muted);
+  line-height: 1.5;
+  margin: 6px 0 0 28px;
+}
+
 @media (max-width: 1100px) {
   .hero,
   .workspace {
