@@ -130,8 +130,8 @@ textarea {
 }
 
 .workspace {
-  display: grid;
-  grid-template-columns: minmax(320px, 0.88fr) minmax(360px, 1.12fr);
+  display: flex;
+  flex-direction: column;
   gap: 20px;
 }
 
@@ -374,12 +374,197 @@ textarea {
   margin: 14px 0;
 }
 
+.promptFieldShell {
+  margin-top: 14px;
+}
+
+.promptLabelRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.promptInput {
+  width: 100%;
+  min-height: 160px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-size: 0.82rem;
+  line-height: 1.55;
+  resize: vertical;
+}
+
 .overrideFooter {
   display: flex;
   justify-content: space-between;
   gap: 12px;
   align-items: center;
   margin-top: 12px;
+}
+
+.stageTabs {
+  margin-top: 0;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  backdrop-filter: blur(18px);
+  border-radius: 26px;
+  padding: 0 22px 22px;
+  box-shadow: var(--shadow);
+}
+
+.stageTabStrip {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border-bottom: 2px solid var(--line);
+  padding: 18px 0 0;
+  -webkit-overflow-scrolling: touch;
+}
+
+.stageTab {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 18px;
+  border: none;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--muted);
+  white-space: nowrap;
+  transition: all 0.15s ease;
+  margin-bottom: -2px;
+}
+.stageTab:hover {
+  color: var(--text);
+  background: rgba(156, 61, 12, 0.04);
+}
+.stageTabActive {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.stageTabCustom .stageTabNum {
+  background: var(--accent);
+  color: #fff;
+}
+.stageTabDone .stageTabNum {
+  background: var(--success);
+  color: #fff;
+}
+.stageTabError .stageTabNum {
+  background: var(--danger);
+  color: #fff;
+}
+.stageTabRunning {
+  animation: tabPulse 1.2s ease-in-out infinite;
+}
+@keyframes tabPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.stageTabNum {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: var(--bg-strong);
+  color: var(--muted);
+}
+
+.stageTabName {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stageTabPanel {
+  border-top: none;
+  padding: 20px 0 0;
+}
+
+.stageTabPanelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.stageTabPanelActions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.runStageButton {
+  border: 0;
+  border-radius: 10px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity 0.15s ease;
+}
+.runStageButton:hover:not(:disabled) {
+  opacity: 0.85;
+}
+.runStageButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.stageTabPanelGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+@media (max-width: 640px) {
+  .stageTabPanelGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.stageTabPanelCol {
+  min-width: 0;
+}
+
+.stageTabSubhead {
+  margin: 0 0 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.stageSettingsCompact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.stageResultBlock {
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .actions {
@@ -437,6 +622,22 @@ textarea {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 12px;
+}
+
+.resultHeaderToggle {
+  cursor: pointer;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+.resultHeaderToggle:hover {
+  background: var(--accent-soft);
 }
 
 .stageTitle,
@@ -561,6 +762,298 @@ textarea {
 
 .markdownBlock {
   max-height: 420px;
+}
+
+.inputModeTabs {
+  display: flex;
+  gap: 4px;
+  margin: 18px 0 16px;
+  padding: 4px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  border: 1px solid var(--line);
+}
+
+.inputModeTab {
+  flex: 1;
+  padding: 11px 16px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.inputModeTab:hover {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.inputModeTabActive {
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--accent);
+  box-shadow: 0 1px 4px rgba(81, 58, 31, 0.08);
+}
+
+.urlAnalysisForm {
+  display: grid;
+  gap: 16px;
+}
+
+.urlInput {
+  font-size: 1rem;
+}
+
+.extractErrorCard {
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(159, 45, 32, 0.06);
+  border: 1px solid rgba(159, 45, 32, 0.18);
+}
+
+.extractSteps {
+  display: grid;
+  gap: 10px;
+}
+
+.extractStep {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.5);
+  overflow: hidden;
+  transition: border-color 200ms ease, background 200ms ease;
+}
+
+.extractStepActive {
+  border-color: rgba(143, 91, 0, 0.3);
+  background: rgba(255, 248, 230, 0.6);
+}
+
+.extractStepDone {
+  border-color: rgba(31, 106, 78, 0.2);
+  background: rgba(240, 255, 248, 0.5);
+}
+
+.extractStepHeader {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+
+.extractStepNumber {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--line);
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.extractStepDone .extractStepNumber {
+  background: rgba(31, 106, 78, 0.15);
+  color: var(--success);
+}
+
+.extractStepActive .extractStepNumber {
+  background: rgba(143, 91, 0, 0.15);
+  color: var(--warning);
+}
+
+.extractStepLabel {
+  font-weight: 500;
+  font-size: 0.92rem;
+}
+
+.extractPreview {
+  margin: 0;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  max-height: 240px;
+  overflow: auto;
+  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.searchProviderRow {
+  margin-top: 16px;
+}
+
+.searchProviderOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.searchProviderPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text);
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.searchProviderPill:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: rgba(156, 61, 12, 0.28);
+  background: rgba(255, 242, 230, 0.8);
+}
+
+.searchProviderPillActive {
+  border-color: rgba(156, 61, 12, 0.36);
+  background: rgba(255, 242, 230, 0.95);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.searchProviderPillDisabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.unconfiguredDot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--danger);
+  flex-shrink: 0;
+}
+
+.evalExpectedCard {
+  border-color: rgba(156, 61, 12, 0.18);
+  background: rgba(255, 248, 240, 0.7);
+}
+
+.evalLoadingCard {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 18px;
+  background: rgba(143, 91, 0, 0.06);
+  border: 1px solid rgba(143, 91, 0, 0.16);
+}
+
+.evalScoreCard {
+  padding: 20px;
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(255, 252, 246, 0.95) 0%, rgba(240, 248, 244, 0.95) 100%);
+  border: 1px solid rgba(31, 106, 78, 0.18);
+  box-shadow: 0 4px 24px rgba(31, 106, 78, 0.06);
+}
+
+.evalScoreHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.evalScoreBig {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.evalScoreNumber {
+  font-family: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  font-size: 2.8rem;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text);
+}
+
+.evalScoreMax {
+  font-size: 1.1rem;
+  color: var(--muted);
+}
+
+.evalReasoning {
+  margin-bottom: 16px;
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--line);
+  color: var(--text);
+  line-height: 1.6;
+  font-size: 0.92rem;
+}
+
+.evalBreakdown {
+  display: grid;
+  gap: 8px;
+}
+
+.evalBreakdownItem {
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(61, 45, 31, 0.08);
+}
+
+.evalBreakdownHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.evalCriterion {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.evalItemScore {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.evalItemScoreGood {
+  background: rgba(31, 106, 78, 0.12);
+  color: var(--success);
+}
+
+.evalItemScoreOk {
+  background: rgba(143, 91, 0, 0.12);
+  color: var(--warning);
+}
+
+.evalItemScorePoor {
+  background: rgba(159, 45, 32, 0.12);
+  color: var(--danger);
+}
+
+.evalComment {
+  color: var(--muted);
+  font-size: 0.86rem;
+  line-height: 1.5;
 }
 
 @media (max-width: 1100px) {

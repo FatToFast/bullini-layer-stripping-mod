@@ -3,6 +3,8 @@
 // 각 단계는 독립적으로 실행되며, 이전 단계의 output을 input으로 받는다.
 // ============================================================
 
+import type { InsightStageName } from "./types";
+
 export const SYSTEM_PROMPT = `너는 Layer-Stripping 분석 프레임워크 기반의 투자 분석 파이프라인 엔진이다.
 
 핵심 원칙:
@@ -399,3 +401,16 @@ Product-first 구조로 최종 결과를 정리하라.
   },
   "markdown_output": ""
 }`;
+
+export const DEFAULT_STAGE_PROMPTS: Record<InsightStageName, string> = {
+  input_validation: "",
+  layer0_layer1: STEP1_PROMPT,
+  event_classification: STEP2_PROMPT,
+  layer2_reverse_paths: STEP3_PROMPT,
+  layer3_adjacent_spillover: STEP4_PROMPT,
+  portfolio_impact: STEP5_PROMPT,
+  layer4_time_horizon: STEP6_PROMPT,
+  layer5_structural_premortem: STEP7_PROMPT,
+  evidence_consolidation: STEP8_PROMPT,
+  output_formatting: STEP9_PROMPT,
+};

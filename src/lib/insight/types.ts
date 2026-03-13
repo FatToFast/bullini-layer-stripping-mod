@@ -121,6 +121,7 @@ export type ModelConfig = {
   model: string;
   temperature: number;
   maxTokens: number;
+  prompt: string;
 };
 
 export type ModelConfigOverride = Partial<ModelConfig>;
@@ -146,3 +147,17 @@ export type PipelineEvent =
   | { type: "search_start"; round: 1 | 2; queries: string[] }
   | { type: "search_complete"; round: 1 | 2; results: unknown[]; error?: string }
   | { type: "pipeline_complete"; result: InsightRunResult };
+
+export type EvaluationBreakdownItem = {
+  criterion: string;
+  score: number;
+  comment: string;
+};
+
+export type EvaluationResult = {
+  score: number;
+  reasoning: string;
+  breakdown: EvaluationBreakdownItem[];
+};
+
+export type CachedStageResults = Partial<Record<InsightStageName, unknown>>;

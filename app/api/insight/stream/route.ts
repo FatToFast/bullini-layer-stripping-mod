@@ -1,5 +1,6 @@
 import { runInsightPipeline } from "@/lib/insight/pipeline";
-import type { PipelineEvent, PipelineModelSettings } from "@/lib/insight/types";
+import type { CachedStageResults, InsightStageName, PipelineEvent, PipelineModelSettings } from "@/lib/insight/types";
+import type { SearchProviderKind } from "@/lib/providers/search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -7,6 +8,9 @@ export const dynamic = "force-dynamic";
 type RequestBody = {
   rawJson?: string;
   modelSettings?: PipelineModelSettings;
+  searchProvider?: SearchProviderKind;
+  targetStage?: InsightStageName;
+  cachedResults?: CachedStageResults;
 };
 
 function toSsePayload(event: PipelineEvent | { type: "error"; message: string }) {
@@ -34,6 +38,9 @@ export async function POST(request: Request) {
         try {
           await runInsightPipeline(body.rawJson ?? "", {
             modelSettings: body.modelSettings,
+            searchProvider: body.searchProvider,
+            targetStage: body.targetStage,
+            cachedResults: body.cachedResults,
             onEvent: (event) => controller.enqueue(encoder.encode(toSsePayload(event))),
           });
         } catch (error) {

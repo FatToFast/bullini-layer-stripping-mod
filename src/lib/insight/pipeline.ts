@@ -1,4 +1,5 @@
 import type {
+  CachedStageResults,
   FinalOutput,
   InsightDataset,
   InsightRunResult,
@@ -10,9 +11,10 @@ import type {
 } from "./types";
 import { normalizeRawInput } from "./normalizers";
 import { runStage } from "./stage-runner";
-import { getSearchProvider, searchWithRetry, type SearchFact } from "@/lib/providers/search";
+import { getSearchProvider, searchWithRetry, type SearchFact, type SearchProviderKind } from "@/lib/providers/search";
 import { callLLM } from "@/lib/providers/llm";
 import { generateStep1Queries, generateStep8Queries } from "./search-queries";
+import { STAGE_ORDER } from "./stage-labels";
 import {
   SYSTEM_PROMPT,
   STEP1_PROMPT,
@@ -34,10 +36,28 @@ function llmCall(stepPrompt: string, userContent: string, config?: ModelConfigOv
   });
 }
 
+/**
+ * Check whether `stageName` is at or before `targetStage` in the pipeline order.
+ * Returns true if the stage should be executed or considered for execution.
+ */
+function isStageInScope(stageName: InsightStageName, targetStage?: InsightStageName): boolean {
+  if (!targetStage) return true;
+  return STAGE_ORDER.indexOf(stageName) <= STAGE_ORDER.indexOf(targetStage);
+}
+
+/**
+ * Run the Layer-Stripping analysis pipeline.
+ *
+ * Supports partial execution via `targetStage` (stop after this stage) and
+ * `cachedResults` (reuse outputs from prior runs for dependency stages).
+ */
 export async function runInsightPipeline(
   rawJson: string,
   options?: {
     modelSettings?: PipelineModelSettings;
+    searchProvider?: SearchProviderKind;
+    targetStage?: InsightStageName;
+    cachedResults?: CachedStageResults;
     onEvent?: (event: PipelineEvent) => void;
   }
 ): Promise<InsightRunResult> {
@@ -45,6 +65,8 @@ export async function runInsightPipeline(
   const stages: StageRecord[] = [];
   const emit = options?.onEvent ?? (() => {});
   const modelSettings = options?.modelSettings;
+  const targetStage = options?.targetStage;
+  const cached = options?.cachedResults ?? {};
 
   function resolveStageConfig(stageName: InsightStageName, fallbackMaxTokens?: number): ModelConfigOverride {
     const stageConfig = modelSettings?.stages?.[stageName];
@@ -57,6 +79,7 @@ export async function runInsightPipeline(
       ...(stageConfig?.model ? { model: stageConfig.model } : {}),
       ...(stageConfig?.temperature !== undefined ? { temperature: stageConfig.temperature } : {}),
       ...(stageConfig?.maxTokens !== undefined ? { maxTokens: stageConfig.maxTokens } : {}),
+      ...(stageConfig?.prompt ? { prompt: stageConfig.prompt } : {}),
       ...(fallbackMaxTokens !== undefined &&
       stageConfig?.maxTokens === undefined &&
       defaultConfig?.maxTokens === undefined
@@ -65,46 +88,42 @@ export async function runInsightPipeline(
     };
   }
 
-  // ── Step 0: Input Validation ──
-  emit({ type: "stage_start", stage: "input_validation" });
-  const step0 = await runStage(
-    { stageName: "input_validation", input: rawJson },
-    async () => normalizeRawInput(rawJson)
-  );
-  stages.push(step0);
-  emit({ type: "stage_complete", record: step0 });
-  if (step0.status === "error") {
-    const result = { runId, stages, finalOutput: null };
-    emit({ type: "pipeline_complete", result });
-    return result;
-  }
-  const dataset = step0.output as InsightDataset;
-
-  // ── Pre-search: Round 1 ──
-  let searchResults1: SearchFact[] = [];
-  const queries1 = generateStep1Queries(dataset);
-  emit({ type: "search_start", round: 1, queries: queries1 });
-  try {
-    const provider = getSearchProvider();
-    const results = await Promise.all(queries1.map((q) => searchWithRetry(provider, q)));
-    searchResults1 = results.flat();
-    emit({ type: "search_complete", round: 1, results: searchResults1 });
-  } catch (err) {
-    emit({ type: "search_complete", round: 1, results: [], error: err instanceof Error ? err.message : "Search failed" });
-  }
-
-  // Helper: run a stage with error short-circuit
+  /**
+   * Helper: run a stage or return cached output.
+   *
+   * When the stage IS the targetStage, always execute (never use cache)
+   * so the user gets a fresh result for the stage they explicitly asked for.
+   * For dependency stages, use cache if available.
+   */
   async function runOrFail(
-    stageName: Parameters<typeof runStage>[0]["stageName"],
+    stageName: InsightStageName,
     input: unknown,
     prompt: string,
     userContent: string,
     extra?: { searchResults?: unknown[]; maxTokens?: number }
   ): Promise<StageRecord | null> {
+    const isTarget = stageName === targetStage;
+    const hasCached = cached[stageName] !== undefined && !isTarget;
+
+    if (hasCached) {
+      const record: StageRecord = {
+        stage: stageName,
+        status: "success",
+        input,
+        output: cached[stageName],
+        elapsedMs: 0,
+      };
+      stages.push(record);
+      emit({ type: "stage_complete", record });
+      return record;
+    }
+
     emit({ type: "stage_start", stage: stageName });
+    const config = resolveStageConfig(stageName, extra?.maxTokens);
+    const effectivePrompt = config.prompt ?? prompt;
     const record = await runStage(
-      { stageName, input, searchResults: extra?.searchResults, prompt },
-      async () => llmCall(prompt, userContent, resolveStageConfig(stageName, extra?.maxTokens))
+      { stageName, input, searchResults: extra?.searchResults, prompt: effectivePrompt },
+      async () => llmCall(effectivePrompt, userContent, config)
     );
     stages.push(record);
     emit({ type: "stage_complete", record });
@@ -116,7 +135,48 @@ export async function runInsightPipeline(
     return record;
   }
 
-  // ── Step 1: Layer 0 + Layer 1 (전제 제거 + 컨센서스 + 불완전성) ──
+  /** Return early helper — builds the result and emits pipeline_complete */
+  function earlyReturn(finalOutput: FinalOutput | null = null): InsightRunResult {
+    const result = { runId, stages, finalOutput };
+    emit({ type: "pipeline_complete", result });
+    return result;
+  }
+
+  // ── Step 0: Input Validation ──
+  let dataset: InsightDataset;
+  if (cached.input_validation && targetStage !== "input_validation") {
+    dataset = cached.input_validation as InsightDataset;
+    const record: StageRecord = { stage: "input_validation", status: "success", input: rawJson, output: dataset, elapsedMs: 0 };
+    stages.push(record);
+    emit({ type: "stage_complete", record });
+  } else {
+    emit({ type: "stage_start", stage: "input_validation" });
+    const step0 = await runStage(
+      { stageName: "input_validation", input: rawJson },
+      async () => normalizeRawInput(rawJson)
+    );
+    stages.push(step0);
+    emit({ type: "stage_complete", record: step0 });
+    if (step0.status === "error") return earlyReturn();
+    dataset = step0.output as InsightDataset;
+  }
+  if (targetStage === "input_validation") return earlyReturn();
+
+  // ── Pre-search: Round 1 ──
+  const searchProviderInstance = getSearchProvider(options?.searchProvider);
+  let searchResults1: SearchFact[] = [];
+  const queries1 = generateStep1Queries(dataset);
+  emit({ type: "search_start", round: 1, queries: queries1 });
+  try {
+    const results = await Promise.all(queries1.map((q) => searchWithRetry(searchProviderInstance, q)));
+    searchResults1 = results.flat();
+    emit({ type: "search_complete", round: 1, results: searchResults1 });
+  } catch (err) {
+    emit({ type: "search_complete", round: 1, results: [], error: err instanceof Error ? err.message : "Search failed" });
+  }
+
+  // ── Step 1: Layer 0 + Layer 1 ──
+  if (!isStageInScope("layer0_layer1", targetStage)) return earlyReturn();
   const step1 = await runOrFail(
     "layer0_layer1",
     { canonical_event: dataset.canonical_event, representative_news: dataset.representative_news },
@@ -131,8 +191,10 @@ export async function runInsightPipeline(
     { searchResults: searchResults1 }
   );
   if (!step1) return { runId, stages, finalOutput: null };
+  if (targetStage === "layer0_layer1") return earlyReturn();
 
   // ── Step 2: Event Classification ──
+  if (!isStageInScope("event_classification", targetStage)) return earlyReturn();
   const step2 = await runOrFail(
     "event_classification",
     { step1: step1.output, canonical_event: dataset.canonical_event },
@@ -144,8 +206,10 @@ export async function runInsightPipeline(
     })
   );
   if (!step2) return { runId, stages, finalOutput: null };
+  if (targetStage === "event_classification") return earlyReturn();
 
   // ── Step 3: Layer 2 — 반대 방향 경로 ──
+  if (!isStageInScope("layer2_reverse_paths", targetStage)) return earlyReturn();
   const step3 = await runOrFail(
     "layer2_reverse_paths",
     { step1: step1.output, step2: step2.output, market_data: dataset.structured_market_data },
@@ -161,8 +225,10 @@ export async function runInsightPipeline(
     { searchResults: searchResults1 }
   );
   if (!step3) return { runId, stages, finalOutput: null };
+  if (targetStage === "layer2_reverse_paths") return earlyReturn();
 
   // ── Step 4: Layer 3 — 인접 시장 전이 ──
+  if (!isStageInScope("layer3_adjacent_spillover", targetStage)) return earlyReturn();
   const step4 = await runOrFail(
     "layer3_adjacent_spillover",
     { step1: step1.output, step3: step3.output, entities: dataset.entities },
@@ -178,8 +244,10 @@ export async function runInsightPipeline(
     })
   );
   if (!step4) return { runId, stages, finalOutput: null };
+  if (targetStage === "layer3_adjacent_spillover") return earlyReturn();
 
-  // ── Step 5: Portfolio Impact (Product-first 핵심) ──
+  // ── Step 5: Portfolio Impact ──
+  if (!isStageInScope("portfolio_impact", targetStage)) return earlyReturn();
   const step5 = await runOrFail(
     "portfolio_impact",
     { portfolio: dataset.portfolio, step1: step1.output, step3: step3.output, step4: step4.output },
@@ -195,8 +263,10 @@ export async function runInsightPipeline(
     { searchResults: searchResults1 }
   );
   if (!step5) return { runId, stages, finalOutput: null };
+  if (targetStage === "portfolio_impact") return earlyReturn();
 
   // ── Step 6: Layer 4 — 시간축 전환 ──
+  if (!isStageInScope("layer4_time_horizon", targetStage)) return earlyReturn();
   const step6 = await runOrFail(
     "layer4_time_horizon",
     { step1: step1.output, step3: step3.output, step4: step4.output, step5: step5.output },
@@ -212,8 +282,10 @@ export async function runInsightPipeline(
     })
   );
   if (!step6) return { runId, stages, finalOutput: null };
+  if (targetStage === "layer4_time_horizon") return earlyReturn();
 
   // ── Step 7: Layer 5 + Premortem ──
+  if (!isStageInScope("layer5_structural_premortem", targetStage)) return earlyReturn();
   const step7 = await runOrFail(
     "layer5_structural_premortem",
     { step1: step1.output, step6: step6.output },
@@ -229,14 +301,14 @@ export async function runInsightPipeline(
     })
   );
   if (!step7) return { runId, stages, finalOutput: null };
+  if (targetStage === "layer5_structural_premortem") return earlyReturn();
 
   // ── Pre-search: Round 2 (verification) ──
   let searchResults2: SearchFact[] = [];
   const queries2 = generateStep8Queries(dataset);
   emit({ type: "search_start", round: 2, queries: queries2 });
   try {
-    const provider = getSearchProvider();
-    const results = await Promise.all(queries2.map((q) => searchWithRetry(provider, q)));
+    const results = await Promise.all(queries2.map((q) => searchWithRetry(searchProviderInstance, q)));
     searchResults2 = results.flat();
     emit({ type: "search_complete", round: 2, results: searchResults2 });
   } catch (err) {
@@ -244,6 +316,7 @@ export async function runInsightPipeline(
   }
 
   // ── Step 8: Evidence Consolidation ──
+  if (!isStageInScope("evidence_consolidation", targetStage)) return earlyReturn();
   const step8 = await runOrFail(
     "evidence_consolidation",
     { allSteps: { step1: step1.output, step3: step3.output, step4: step4.output, step5: step5.output, step6: step6.output, step7: step7.output } },
@@ -262,6 +335,7 @@ export async function runInsightPipeline(
     { searchResults: [...searchResults1, ...searchResults2] }
   );
   if (!step8) return { runId, stages, finalOutput: null };
+  if (targetStage === "evidence_consolidation") return earlyReturn();
 
   // ── Step 9: Output Formatting (Product-first) ──
   const step9 = await runOrFail(
@@ -297,7 +371,5 @@ export async function runInsightPipeline(
     };
   }
 
-  const result = { runId, stages, finalOutput };
-  emit({ type: "pipeline_complete", result });
-  return result;
+  return earlyReturn(finalOutput);
 }

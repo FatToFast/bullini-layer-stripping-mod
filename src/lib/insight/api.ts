@@ -1,9 +1,10 @@
 import type {
+  CachedStageResults,
   InsightRunResult,
   InsightStageName,
   PipelineModelSettings,
-  PipelineEvent,
   StageRecord,
+  EvaluationResult,
 } from "./types";
 
 export type StreamCallbacks = {
@@ -18,12 +19,15 @@ export type StreamCallbacks = {
 export async function runInsightApiStream(
   rawJson: string,
   modelSettings?: PipelineModelSettings,
-  callbacks?: StreamCallbacks
+  callbacks?: StreamCallbacks,
+  searchProvider?: string,
+  targetStage?: InsightStageName,
+  cachedResults?: CachedStageResults
 ): Promise<InsightRunResult> {
   const response = await fetch("/api/insight/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rawJson, modelSettings }),
+    body: JSON.stringify({ rawJson, modelSettings, searchProvider, targetStage, cachedResults }),
   });
 
   if (!response.ok) {
@@ -88,4 +92,114 @@ export async function runInsightApiStream(
 
   if (!finalResult) throw new Error("Pipeline did not complete");
   return finalResult;
+}
+
+export type ExtractModelSettings = {
+  model?: string;
+  temperature?: number;
+  maxTokens?: number;
+};
+
+export type FetchTextResult = {
+  text: string;
+  charCount: number;
+  truncated: boolean;
+  originalCharCount: number;
+};
+
+export async function fetchArticleText(
+  url: string
+): Promise<FetchTextResult | { error: string }> {
+  try {
+    const response = await fetch("/api/insight/fetch-text", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as
+      | (FetchTextResult & { error?: string })
+      | { error: string }
+      | null;
+
+    if (!response.ok) {
+      return { error: (payload as { error?: string })?.error ?? `Fetch failed: ${response.status}` };
+    }
+
+    if (payload && "text" in payload) {
+      return payload as FetchTextResult;
+    }
+
+    return { error: "Invalid response payload" };
+  } catch (error) {
+    return {
+      error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
+export async function evaluateOutput(
+  actualOutput: string,
+  expectedCriteria: string,
+  modelSettings?: ExtractModelSettings
+): Promise<EvaluationResult | { error: string }> {
+  try {
+    const response = await fetch("/api/insight/evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ actualOutput, expectedCriteria, modelSettings }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as
+      | (EvaluationResult & { error?: string })
+      | { error: string }
+      | null;
+
+    if (!response.ok) {
+      return { error: (payload as { error?: string })?.error ?? `Evaluation failed: ${response.status}` };
+    }
+
+    if (payload && "score" in payload && "breakdown" in payload) {
+      return payload as EvaluationResult;
+    }
+
+    return { error: "Invalid evaluation response" };
+  } catch (error) {
+    return {
+      error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
+}
+
+export async function structureWithLlm(
+  text: string,
+  analysisPrompt?: string,
+  portfolio?: Array<{ company: string; ticker?: string; held: "held" | "watchlist" }>,
+  modelSettings?: ExtractModelSettings
+): Promise<{ dataset: unknown } | { error: string }> {
+  try {
+    const response = await fetch("/api/insight/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, analysisPrompt, portfolio, modelSettings }),
+    });
+
+    const payload = (await response.json().catch(() => null)) as
+      | { dataset?: unknown; error?: string }
+      | null;
+
+    if (!response.ok) {
+      return { error: payload?.error ?? `API request failed: ${response.status}` };
+    }
+
+    if (payload?.dataset !== undefined) {
+      return { dataset: payload.dataset };
+    }
+
+    return { error: "Invalid response payload" };
+  } catch (error) {
+    return {
+      error: `Network error: ${error instanceof Error ? error.message : "Unknown error"}`,
+    };
+  }
 }
