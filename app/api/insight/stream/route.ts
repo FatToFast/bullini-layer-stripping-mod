@@ -11,6 +11,7 @@ type RequestBody = {
   searchProvider?: SearchProviderKind;
   targetStage?: InsightStageName;
   cachedResults?: CachedStageResults;
+  systemPrompt?: string;
 };
 
 function toSsePayload(event: PipelineEvent | { type: "error"; message: string }) {
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
             searchProvider: body.searchProvider,
             targetStage: body.targetStage,
             cachedResults: body.cachedResults,
+            systemPrompt: body.systemPrompt || undefined,
             onEvent: (event) => controller.enqueue(encoder.encode(toSsePayload(event))),
           });
         } catch (error) {

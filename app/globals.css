@@ -567,6 +567,74 @@ textarea {
   overflow-y: auto;
 }
 
+/* ---- System Prompt Card ---- */
+.systemPromptCard {
+  margin-top: 12px;
+}
+.systemPromptToggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  width: 100%;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+.systemPromptBadges {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.systemPromptBody {
+  margin-top: 12px;
+}
+.systemPromptInput {
+  min-height: 180px;
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+.systemPromptActions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 8px;
+}
+
+/* ---- Full Prompt Preview (per-stage) ---- */
+.fullPromptPreview {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0;
+  overflow: hidden;
+}
+.fullPromptPreview[open] {
+  padding-bottom: 0;
+}
+.fullPromptSummary {
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  background: rgba(156, 61, 12, 0.04);
+}
+.fullPromptSummary:hover {
+  background: rgba(156, 61, 12, 0.08);
+}
+.fullPromptPreview .codeBlock {
+  border-radius: 0;
+  margin: 0;
+  border-top: 1px solid var(--line);
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 0.75rem;
+}
+
 .actions {
   display: flex;
   gap: 12px;

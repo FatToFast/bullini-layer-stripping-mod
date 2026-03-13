@@ -62,6 +62,7 @@ type Props = {
   defaultModel: string;
   providerLabel: string;
   searchProviders: SearchProviderOption[];
+  defaultSystemPrompt: string;
   samples: SampleItem[];
 };
 
@@ -127,7 +128,7 @@ function buildInitialStageConfigs(
   };
 }
 
-export function InsightWorkbench({ defaultModel, providerLabel, searchProviders, samples }: Props) {
+export function InsightWorkbench({ defaultModel, providerLabel, searchProviders, defaultSystemPrompt, samples }: Props) {
   const defaultSample = samples[0];
   const [selectedSample, setSelectedSample] = useState(defaultSample?.key ?? "");
   const [rawJson, setRawJson] = useState(defaultSample?.rawJson ?? "");
@@ -135,6 +136,8 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [commonCustomModel, setCommonCustomModel] = useState(isKnownModel(defaultModel) ? "" : defaultModel);
   const [commonTemperature, setCommonTemperature] = useState(DEFAULT_TEMPERATURE);
   const [commonMaxTokens, setCommonMaxTokens] = useState(DEFAULT_MAX_TOKENS);
+  const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt);
+  const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const [stageConfigs, setStageConfigs] = useState<Record<InsightStageName, StageUiConfig>>(
     buildInitialStageConfigs(defaultModel, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS)
   );
@@ -429,7 +432,10 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             startTransition(() => setError(message));
           },
         },
-        searchProvider
+        searchProvider,
+        undefined,
+        undefined,
+        systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined
       );
 
       setFinalResult(result);
@@ -521,7 +527,8 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         },
         searchProvider,
         targetStage,
-        buildCachedResults()
+        buildCachedResults(),
+        systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined
       );
 
       if (result?.finalOutput) setFinalResult(result);
@@ -829,6 +836,55 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             </div>
           </div>
 
+          <div className="configCard systemPromptCard">
+            <button
+              type="button"
+              className="sectionHeader systemPromptToggle"
+              onClick={() => setSystemPromptOpen((prev) => !prev)}
+              aria-expanded={systemPromptOpen}
+            >
+              <div>
+                <h3 className="sectionTitle">System Prompt</h3>
+                <p className="panelLead">
+                  모든 Stage에 공통 적용되는 시스템 프롬프트입니다. 수정하면 전체 파이프라인 결과가 바뀝니다.
+                </p>
+              </div>
+              <div className="systemPromptBadges">
+                {systemPrompt !== defaultSystemPrompt ? (
+                  <span className="statusBadge status-running">Modified</span>
+                ) : (
+                  <span className="statusBadge status-success">Default</span>
+                )}
+                <span className="statusBadge status-running">
+                  {systemPromptOpen ? "▲ Collapse" : "▶ Expand"}
+                </span>
+              </div>
+            </button>
+            {systemPromptOpen ? (
+              <div className="systemPromptBody">
+                <textarea
+                  className="promptInput systemPromptInput"
+                  value={systemPrompt}
+                  onChange={(event) => setSystemPrompt(event.target.value)}
+                  spellCheck={false}
+                  rows={12}
+                />
+                <div className="systemPromptActions">
+                  {systemPrompt !== defaultSystemPrompt ? (
+                    <button
+                      type="button"
+                      className="miniButton"
+                      onClick={() => setSystemPrompt(defaultSystemPrompt)}
+                    >
+                      Reset to Default
+                    </button>
+                  ) : null}
+                  <span className="hintText">{systemPrompt.length} chars</span>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
           {inputMode === "json" ? (
             <div className="fieldGrid">
               <label>
@@ -1080,6 +1136,13 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                         </div>
                       </>
                     ) : null}
+
+                    <details className="fullPromptPreview">
+                      <summary className="fullPromptSummary">
+                        Full Prompt Preview (System + Stage)
+                      </summary>
+                      <pre className="codeBlock stageResultBlock">{systemPrompt + "\n\n" + (config.enabled ? config.prompt : DEFAULT_STAGE_PROMPTS[stage])}</pre>
+                    </details>
                   </div>
 
                   <div className="stageTabPanelCol">

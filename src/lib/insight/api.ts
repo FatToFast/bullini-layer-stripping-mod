@@ -22,12 +22,13 @@ export async function runInsightApiStream(
   callbacks?: StreamCallbacks,
   searchProvider?: string,
   targetStage?: InsightStageName,
-  cachedResults?: CachedStageResults
+  cachedResults?: CachedStageResults,
+  systemPrompt?: string
 ): Promise<InsightRunResult> {
   const response = await fetch("/api/insight/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ rawJson, modelSettings, searchProvider, targetStage, cachedResults }),
+    body: JSON.stringify({ rawJson, modelSettings, searchProvider, targetStage, cachedResults, systemPrompt: systemPrompt || undefined }),
   });
 
   if (!response.ok) {

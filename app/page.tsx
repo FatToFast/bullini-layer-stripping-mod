@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { InsightWorkbench } from "@/components/insight-workbench";
 import { getAvailableProviders } from "@/lib/providers/search";
+import { SYSTEM_PROMPT } from "@/lib/insight/prompts";
 
 async function loadSampleFile(filename: string) {
   return readFile(path.join(process.cwd(), "src/lib/insight/samples", filename), "utf8");
@@ -22,6 +23,7 @@ export default async function Page() {
       defaultModel={defaultModel}
       providerLabel={providerLabel}
       searchProviders={searchProviders}
+      defaultSystemPrompt={SYSTEM_PROMPT}
       samples={[
         { key: "evt-301-tariff", label: "301조 관세 조사", rawJson: tariffSample },
         { key: "evt-hbm-export", label: "HBM 수출 규제", rawJson: hbmSample },

@@ -28,12 +28,14 @@ import {
   STEP9_PROMPT,
 } from "./prompts";
 
-function llmCall(stepPrompt: string, userContent: string, config?: ModelConfigOverride) {
-  return callLLM(SYSTEM_PROMPT + "\n\n" + stepPrompt, userContent, {
-    ...(config?.model ? { model: config.model } : {}),
-    ...(config?.temperature !== undefined ? { temperature: config.temperature } : {}),
-    ...(config?.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
-  });
+function makeLlmCall(baseSystemPrompt: string) {
+  return function llmCall(stepPrompt: string, userContent: string, config?: ModelConfigOverride) {
+    return callLLM(baseSystemPrompt + "\n\n" + stepPrompt, userContent, {
+      ...(config?.model ? { model: config.model } : {}),
+      ...(config?.temperature !== undefined ? { temperature: config.temperature } : {}),
+      ...(config?.maxTokens !== undefined ? { maxTokens: config.maxTokens } : {}),
+    });
+  };
 }
 
 /**
@@ -58,6 +60,7 @@ export async function runInsightPipeline(
     searchProvider?: SearchProviderKind;
     targetStage?: InsightStageName;
     cachedResults?: CachedStageResults;
+    systemPrompt?: string;
     onEvent?: (event: PipelineEvent) => void;
   }
 ): Promise<InsightRunResult> {
@@ -67,6 +70,7 @@ export async function runInsightPipeline(
   const modelSettings = options?.modelSettings;
   const targetStage = options?.targetStage;
   const cached = options?.cachedResults ?? {};
+  const llmCall = makeLlmCall(options?.systemPrompt || SYSTEM_PROMPT);
 
   function resolveStageConfig(stageName: InsightStageName, fallbackMaxTokens?: number): ModelConfigOverride {
     const stageConfig = modelSettings?.stages?.[stageName];
