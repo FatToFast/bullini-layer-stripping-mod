@@ -22,6 +22,7 @@ import {
 } from "@/lib/insight/search-query-prompts";
 import type {
   CachedStageResults,
+  FinalOutput,
   InsightRunResult,
   InsightStageName,
   PipelineModelSettings,
@@ -85,9 +86,16 @@ const TOKEN_PRESETS = [1200, 1800, 2500, 4000];
 const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_MAX_TOKENS = 1800;
 const OUTPUT_STAGE_TOKENS = 4000;
+const ANALYSIS_STORAGE_PREFIX = "bullini-analysis-";
 const MODEL_NOTE_LOOKUP = new Map(
   MODEL_GROUPS.flatMap((group) => group.options.map((option) => [option.value, option.note] as const))
 );
+
+type StoredAnalysis = {
+  timestamp: number;
+  eventId: string;
+  output: FinalOutput;
+};
 
 function prettyJson(value: unknown) {
   return JSON.stringify(value, null, 2);
@@ -103,6 +111,58 @@ function getSelectValue(model: string) {
 
 function getEffectiveModel(model: string, customModel: string) {
   return model === CUSTOM_MODEL_VALUE ? customModel.trim() : model;
+}
+
+function stringifyValue(value: unknown) {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function getEventIdFromRawJson(input: string) {
+  try {
+    const parsed = JSON.parse(input) as { canonical_event?: { event_id?: unknown } };
+    const eventId = parsed.canonical_event?.event_id;
+    return typeof eventId === "string" && eventId.trim() ? eventId.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredAnalysis(eventId: string) {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const stored = window.localStorage.getItem(`${ANALYSIS_STORAGE_PREFIX}${eventId}`);
+    if (!stored) return null;
+
+    const parsed = JSON.parse(stored) as Partial<StoredAnalysis>;
+    if (typeof parsed.timestamp !== "number" || !parsed.output) {
+      return null;
+    }
+
+    return {
+      timestamp: parsed.timestamp,
+      output: parsed.output as FinalOutput,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function formatStoredDate(timestamp: number) {
+  if (!Number.isFinite(timestamp)) return "unknown";
+  return new Date(timestamp).toISOString().slice(0, 10);
+}
+
+function getWatchTriggerKey(trigger: FinalOutput["watchTriggers"][number]) {
+  return stringifyValue(trigger);
+}
+
+function getWatchTriggerLabel(trigger: FinalOutput["watchTriggers"][number]) {
+  return `${trigger.date} - ${trigger.event}`;
 }
 
 function buildInitialStageConfigs(
@@ -151,6 +211,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [stageRecords, setStageRecords] = useState<StageRecord[]>([]);
   const [searchRounds, setSearchRounds] = useState<SearchRoundState[]>([]);
   const [finalResult, setFinalResult] = useState<InsightRunResult | null>(null);
+  const [previousResult, setPreviousResult] = useState<{ timestamp: number; output: FinalOutput } | null>(null);
   const [activeStage, setActiveStage] = useState<InsightStageName | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [newsUrl, setNewsUrl] = useState("");
@@ -192,6 +253,57 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   );
   const tunedStages = useMemo(() => TUNABLE_STAGES.filter((stage) => stage !== "input_validation"), []);
   const overrideCount = tunedStages.filter((stage) => stageConfigs[stage].enabled).length;
+  const finalOutputComparison = useMemo(() => {
+    if (!previousResult || !deferredFinalResult?.finalOutput) return null;
+
+    const currentOutput = deferredFinalResult.finalOutput;
+    const previousOutput = previousResult.output;
+    const structuralReadChanged = stringifyValue(previousOutput.structuralRead) !== stringifyValue(currentOutput.structuralRead);
+    const oneLineTakeChanged = stringifyValue(previousOutput.oneLineTake) !== stringifyValue(currentOutput.oneLineTake);
+    const previousHypothesisWeights = new Map(
+      previousOutput.competingHypotheses.map((hypothesis) => [hypothesis.label, hypothesis.currentWeight])
+    );
+    const weightChanges = currentOutput.competingHypotheses.flatMap((hypothesis) => {
+      const previousWeight = previousHypothesisWeights.get(hypothesis.label);
+      if (!previousWeight || stringifyValue(previousWeight) === stringifyValue(hypothesis.currentWeight)) {
+        return [];
+      }
+
+      return [
+        {
+          label: hypothesis.label,
+          previousWeight,
+          currentWeight: hypothesis.currentWeight,
+        },
+      ];
+    });
+    const previousTriggerMap = new Map(
+      previousOutput.watchTriggers.map((trigger) => [getWatchTriggerKey(trigger), trigger])
+    );
+    const currentTriggerMap = new Map(
+      currentOutput.watchTriggers.map((trigger) => [getWatchTriggerKey(trigger), trigger])
+    );
+    const addedTriggers = currentOutput.watchTriggers.filter(
+      (trigger) => !previousTriggerMap.has(getWatchTriggerKey(trigger))
+    );
+    const removedTriggers = previousOutput.watchTriggers.filter(
+      (trigger) => !currentTriggerMap.has(getWatchTriggerKey(trigger))
+    );
+
+    return {
+      structuralReadChanged,
+      oneLineTakeChanged,
+      weightChanges,
+      addedTriggers,
+      removedTriggers,
+      hasChanges:
+        structuralReadChanged ||
+        oneLineTakeChanged ||
+        weightChanges.length > 0 ||
+        addedTriggers.length > 0 ||
+        removedTriggers.length > 0,
+    };
+  }, [deferredFinalResult, previousResult]);
 
   function buildModelSettings(): PipelineModelSettings {
     const stages = Object.fromEntries(
@@ -357,6 +469,8 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   }
 
   async function handleRun() {
+    const eventId = getEventIdFromRawJson(rawJson);
+    setPreviousResult(eventId ? readStoredAnalysis(eventId) : null);
     setIsRunning(true);
     setError(null);
     setActiveStage("input_validation");
@@ -426,6 +540,19 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       );
 
       setFinalResult(result);
+      if (eventId && result.finalOutput && typeof window !== "undefined") {
+        try {
+          window.localStorage.setItem(
+            `${ANALYSIS_STORAGE_PREFIX}${eventId}`,
+            JSON.stringify({
+              timestamp: Date.now(),
+              eventId,
+              output: result.finalOutput,
+            })
+          );
+        } catch {
+        }
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "분석 실행에 실패했습니다.");
     } finally {
@@ -552,10 +679,9 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       <section className="hero">
         <div className="heroCard">
           <span className="kicker">Standalone Localhost App</span>
-          <h1 className="heroTitle">Layer-Stripping Analysis Workbench</h1>
+          <h1 className="heroTitle">Stress Test</h1>
           <p className="heroText">
-            공통 모델 프로필과 단계별 override를 동시에 다루는 실행 콘솔입니다. OpenRouter 주요 모델을
-            드롭다운으로 고르고, 필요한 단계만 별도 모델과 온도, 토큰 수를 조정할 수 있습니다.
+            뉴스 이벤트에 대한 포트폴리오 스트레스 테스트를 실행합니다. 포트폴리오 없이도 영향받는 기업을 자동으로 분석합니다.
           </p>
         </div>
         <div className="heroMeta">
@@ -848,7 +974,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               onClick={handleRun}
               disabled={isRunning || !rawJson.trim()}
             >
-              {isRunning ? "Running..." : "Run Pipeline"}
+              {isRunning ? "분석 중..." : "Stress Test 실행"}
             </button>
             <span className="statusLine">
               {activeStage
@@ -988,7 +1114,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                       disabled={isBusy || !rawJson.trim()}
                       onClick={() => handleRunStage(stage)}
                     >
-                      {runningStage === stage ? "Running..." : "▶ Run This Stage"}
+                      {runningStage === stage ? "분석 중..." : "▶ Run This Stage"}
                     </button>
                     {record?.status === "success" ? (
                       <span className="statusBadge status-success">
@@ -1479,6 +1605,79 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
             {deferredFinalResult?.finalOutput ? (
               <div className="resultGrid">
+                {previousResult && finalOutputComparison ? (
+                  <details className="summaryBlock">
+                    <summary className="summaryLabel">
+                      {`📊 이전 분석과 비교 (${formatStoredDate(previousResult.timestamp)})`}
+                    </summary>
+                    <div className="triggerList">
+                      {finalOutputComparison.structuralReadChanged ? (
+                        <div className="listCard">
+                          <div className="metaRow">
+                            <strong>structural_read</strong>
+                            <span className="statusBadge status-running">Changed</span>
+                          </div>
+                          <div>old: {previousResult.output.structuralRead}</div>
+                          <div>new: {deferredFinalResult.finalOutput.structuralRead}</div>
+                        </div>
+                      ) : null}
+
+                      {finalOutputComparison.oneLineTakeChanged ? (
+                        <div className="listCard">
+                          <div className="metaRow">
+                            <strong>one_line_take</strong>
+                            <span className="statusBadge status-running">Changed</span>
+                          </div>
+                          <div>old: {previousResult.output.oneLineTake}</div>
+                          <div>new: {deferredFinalResult.finalOutput.oneLineTake}</div>
+                        </div>
+                      ) : null}
+
+                      {finalOutputComparison.weightChanges.map((change) => (
+                        <div key={change.label} className="listCard">
+                          <div className="metaRow">
+                            <strong>{change.label}</strong>
+                            <span className="statusBadge status-running">Weight Changed</span>
+                          </div>
+                          <div>{`${change.previousWeight} -> ${change.currentWeight}`}</div>
+                        </div>
+                      ))}
+
+                      {finalOutputComparison.addedTriggers.map((trigger) => (
+                        <div key={`added-${getWatchTriggerKey(trigger)}`} className="listCard">
+                          <div className="metaRow">
+                            <strong>watch_trigger</strong>
+                            <span className="statusBadge status-success">Added</span>
+                          </div>
+                          <div>{getWatchTriggerLabel(trigger)}</div>
+                          <div>trigger: {trigger.thesisTrigger}</div>
+                        </div>
+                      ))}
+
+                      {finalOutputComparison.removedTriggers.map((trigger) => (
+                        <div key={`removed-${getWatchTriggerKey(trigger)}`} className="listCard">
+                          <div className="metaRow">
+                            <strong>watch_trigger</strong>
+                            <span className="statusBadge status-error">Removed</span>
+                          </div>
+                          <div>{getWatchTriggerLabel(trigger)}</div>
+                          <div>trigger: {trigger.thesisTrigger}</div>
+                        </div>
+                      ))}
+
+                      {!finalOutputComparison.hasChanges ? (
+                        <div className="listCard">
+                          <div className="metaRow">
+                            <strong>변경 사항</strong>
+                            <span className="statusBadge status-success">No Changes</span>
+                          </div>
+                          <div>이전 분석과 주요 출력이 동일합니다.</div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </details>
+                ) : null}
+
                 <div className="summaryBlock">
                   <span className="summaryLabel">One Line Take</span>
                   <div>{deferredFinalResult.finalOutput.oneLineTake}</div>
@@ -1492,54 +1691,63 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   <div>{deferredFinalResult.finalOutput.structuralRead}</div>
                 </div>
 
-                <div className="tableWrap">
+                <div className="summaryBlock">
                   <span className="summaryLabel">
                     {deferredFinalResult.finalOutput.mode === "personalized"
                       ? "Portfolio Impact"
                       : "Affected Entities"}
                   </span>
-                  <table className="table">
-                    <thead>
-                      <tr>
-                        <th>Company</th>
-                        <th>{deferredFinalResult.finalOutput.mode === "personalized" ? "Held" : "Type"}</th>
-                        <th>Exposure</th>
-                        <th>What Changes Today</th>
-                        <th>What to Monitor</th>
-                        <th>Confidence</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => (
-                        <tr key={`${row.company}-${row.held}`}>
-                          <td>{row.company}</td>
-                          <td>{row.held}</td>
-                          <td>{row.exposureType}</td>
-                          <td>{row.whatChangesToday}</td>
-                          <td>{row.whatToMonitor}</td>
-                          <td>{row.confidence}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div className="triggerList">
+                    {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => (
+                      <details key={`${row.company}-${row.held}`} className="listCard">
+                        <summary>
+                          <strong>{row.company}</strong>
+                          <span className="summaryPill">{row.exposureType}</span>
+                          <span className="summaryPill">{row.held}</span>
+                          <span className="summaryPill">{row.confidence}</span>
+                        </summary>
+                        <div className="metaRow">
+                          <span>{row.whatChangesToday}</span>
+                        </div>
+                        <div className="metaRow">
+                          <span>다음 확인: {row.whatToMonitor}</span>
+                        </div>
+                      </details>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="triggerList">
-                  {deferredFinalResult.finalOutput.watchTriggers.map((trigger) => (
-                    <div key={`${trigger.date}-${trigger.event}`} className="listCard">
-                      <strong>
-                        {trigger.date} · {trigger.event}
-                      </strong>
-                      <div>if confirmed: {trigger.ifConfirmed}</div>
-                      <div>if not: {trigger.ifNot}</div>
-                      <div>trigger: {trigger.thesisTrigger}</div>
-                    </div>
-                  ))}
-                </div>
+                <details className="summaryBlock">
+                  <summary className="summaryLabel">
+                    <span>Watch Triggers ({deferredFinalResult.finalOutput.watchTriggers.length})</span>
+                    {deferredFinalResult.finalOutput.watchTriggers.length > 0 ? (
+                      <span className="summaryPill">Next: {deferredFinalResult.finalOutput.watchTriggers[0].date}</span>
+                    ) : null}
+                  </summary>
+                  <div className="triggerList">
+                    {deferredFinalResult.finalOutput.watchTriggers.map((trigger) => (
+                      <div key={`${trigger.date}-${trigger.event}`} className="listCard">
+                        <strong>
+                          {trigger.date} · {trigger.event}
+                        </strong>
+                        <div>if confirmed: {trigger.ifConfirmed}</div>
+                        <div>if not: {trigger.ifNot}</div>
+                        <div>trigger: {trigger.thesisTrigger}</div>
+                      </div>
+                    ))}
+                  </div>
+                </details>
 
                 {deferredFinalResult.finalOutput.competingHypotheses.length > 0 ? (
-                  <div className="summaryBlock">
-                    <span className="summaryLabel">Competing Hypotheses</span>
+                  <details className="summaryBlock">
+                    <summary className="summaryLabel">
+                      <span>Competing Hypotheses ({deferredFinalResult.finalOutput.competingHypotheses.length})</span>
+                      {deferredFinalResult.finalOutput.competingHypotheses.length > 0 ? (
+                        <span className="summaryPill">
+                          {deferredFinalResult.finalOutput.competingHypotheses.find(h => (h as unknown as Record<string, unknown>).current_weight === "strongest" || h.currentWeight === "strongest")?.label ?? ""}
+                        </span>
+                      ) : null}
+                    </summary>
                     <div className="triggerList">
                       {deferredFinalResult.finalOutput.competingHypotheses.map((h, idx) => {
                         const raw = h as unknown as Record<string, unknown>;
@@ -1563,12 +1771,14 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                         );
                       })}
                     </div>
-                  </div>
+                  </details>
                 ) : null}
 
                 {deferredFinalResult.finalOutput.historicalPrecedents.length > 0 ? (
-                  <div className="summaryBlock">
-                    <span className="summaryLabel">Historical Precedents (Base Rate)</span>
+                  <details className="summaryBlock">
+                    <summary className="summaryLabel">
+                      <span>Historical Precedents (Base Rate) ({deferredFinalResult.finalOutput.historicalPrecedents.length})</span>
+                    </summary>
                     <div className="triggerList">
                       {deferredFinalResult.finalOutput.historicalPrecedents.map((p, idx) => (
                         <div key={`prec-${idx}-${p.pattern}`} className="listCard">
@@ -1580,28 +1790,37 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </details>
                 ) : null}
 
-                <div className="whyList">
-                  {deferredFinalResult.finalOutput.whySections.map((section) => (
-                    <div key={section.label} className="listCard">
-                      <strong>{section.label}</strong>
-                      <div>{section.content}</div>
-                      <div className="metaRow">
-                        <span>{section.confidence}</span>
+                <details className="summaryBlock">
+                  <summary className="summaryLabel">
+                    <span>Why Sections ({deferredFinalResult.finalOutput.whySections.length})</span>
+                  </summary>
+                  <div className="whyList">
+                    {deferredFinalResult.finalOutput.whySections.map((section) => (
+                      <div key={section.label} className="listCard">
+                        <strong>{section.label}</strong>
+                        <div>{section.content}</div>
+                        <div className="metaRow">
+                          <span>{section.confidence}</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                </details>
 
-                <div className="summaryBlock">
-                  <span className="summaryLabel">Premortem</span>
-                  <div>{deferredFinalResult.finalOutput.premortem.coreThesis}</div>
+                <details className="summaryBlock">
+                  <summary className="summaryLabel">
+                    <span>Premortem</span>
+                    {deferredFinalResult.finalOutput.premortem.coreThesis ? (
+                      <span className="summaryPill">{deferredFinalResult.finalOutput.premortem.coreThesis}</span>
+                    ) : null}
+                  </summary>
                   <div>{deferredFinalResult.finalOutput.premortem.primaryFailure}</div>
                   <div>{deferredFinalResult.finalOutput.premortem.earlyWarning}</div>
                   <div>{deferredFinalResult.finalOutput.premortem.ifWrong}</div>
-                </div>
+                </details>
 
                 {deferredFinalResult.finalOutput.mode === "general" ? (
                   <div className="summaryBlock" style={{ background: "var(--accent-bg, #f0f4ff)", borderRadius: 8, padding: 16, textAlign: "center" }}>
