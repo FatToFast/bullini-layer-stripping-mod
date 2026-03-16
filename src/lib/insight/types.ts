@@ -47,6 +47,31 @@ export type HistoricalPrecedent = {
   caveat: string;
 };
 
+// --- Inconsistencies (모순/불일치 감지) ---
+export type Inconsistency = {
+  claimA: string;
+  claimB: string;
+  tension: string;
+  whatResolvesIt: string;
+};
+
+// --- Narrative Parallels (내러티브 패턴 매칭) ---
+export type NarrativeParallel = {
+  episode: string;
+  commonStructure: string;
+  keyDifference: string;
+  howItPlayedOut: string;
+  whyThisTimeMayDiffer: string;
+  source: string;
+};
+
+// --- Meta Assumptions (분석의 숨은 전제) ---
+export type MetaAssumption = {
+  assumption: string;
+  ifWrong: string;
+  check: string;
+};
+
 // --- Final Output (Product-first) ---
 export type FinalOutput = {
   mode: "personalized" | "general";
@@ -55,6 +80,9 @@ export type FinalOutput = {
   competingHypotheses: CompetingHypothesis[];
   whySections: WhySection[];
   historicalPrecedents: HistoricalPrecedent[];
+  inconsistencies: Inconsistency[];
+  narrativeParallels: NarrativeParallel[];
+  metaAssumptions: MetaAssumption[];
   structuralRead: string;
   premortem: PremortermBasic;
   oneLineTake: string;
