@@ -131,6 +131,43 @@ function getEventIdFromRawJson(input: string) {
   }
 }
 
+function addCompanyToPortfolio(rawJson: string, company: string): string {
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!Array.isArray(parsed.portfolio)) {
+      parsed.portfolio = [];
+    }
+    const exists = parsed.portfolio.some(
+      (item: { company?: string }) => item.company === company
+    );
+    if (exists) {
+      parsed.portfolio = parsed.portfolio.map(
+        (item: { company?: string; held?: string }) =>
+          item.company === company ? { ...item, held: "held" } : item
+      );
+    } else {
+      parsed.portfolio.push({ company, held: "held" });
+    }
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return rawJson;
+  }
+}
+
+function getPortfolioHeldCompanies(rawJson: string): Set<string> {
+  try {
+    const parsed = JSON.parse(rawJson);
+    if (!Array.isArray(parsed.portfolio)) return new Set();
+    return new Set(
+      parsed.portfolio
+        .filter((item: { held?: string }) => item.held === "held")
+        .map((item: { company?: string }) => item.company)
+    );
+  } catch {
+    return new Set();
+  }
+}
+
 function readStoredAnalysis(eventId: string) {
   if (typeof window === "undefined") return null;
 
@@ -1698,22 +1735,43 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                       : "Affected Entities"}
                   </span>
                   <div className="triggerList">
-                    {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => (
-                      <details key={`${row.company}-${row.held}`} className="listCard">
-                        <summary>
-                          <strong>{row.company}</strong>
-                          <span className="summaryPill">{row.exposureType}</span>
-                          <span className="summaryPill">{row.held}</span>
-                          <span className="summaryPill">{row.confidence}</span>
-                        </summary>
-                        <div className="metaRow">
-                          <span>{row.whatChangesToday}</span>
-                        </div>
-                        <div className="metaRow">
-                          <span>다음 확인: {row.whatToMonitor}</span>
-                        </div>
-                      </details>
-                    ))}
+                    {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => {
+                      const heldCompanies = getPortfolioHeldCompanies(rawJson);
+                      const isHeld = heldCompanies.has(row.company);
+                      const isGeneral = deferredFinalResult.finalOutput.mode === "general";
+                      return (
+                        <details key={`${row.company}-${row.held}`} className="listCard">
+                          <summary>
+                            <strong>{row.company}</strong>
+                            <span className="summaryPill">{row.exposureType}</span>
+                            {isGeneral ? (
+                              <button
+                                type="button"
+                                className={`summaryPill ${isHeld ? "summaryPillAccent" : ""}`}
+                                style={{ cursor: "pointer", border: "none" }}
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  if (!isHeld) {
+                                    setRawJson(addCompanyToPortfolio(rawJson, row.company));
+                                  }
+                                }}
+                              >
+                                {isHeld ? "✓ 보유 중" : "+ 보유 중"}
+                              </button>
+                            ) : (
+                              <span className="summaryPill">{row.held}</span>
+                            )}
+                            <span className="summaryPill">{row.confidence}</span>
+                          </summary>
+                          <div className="metaRow">
+                            <span>{row.whatChangesToday}</span>
+                          </div>
+                          <div className="metaRow">
+                            <span>다음 확인: {row.whatToMonitor}</span>
+                          </div>
+                        </details>
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -1822,12 +1880,30 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   <div>{deferredFinalResult.finalOutput.premortem.ifWrong}</div>
                 </details>
 
-                {deferredFinalResult.finalOutput.mode === "general" ? (
-                  <div className="summaryBlock" style={{ background: "var(--accent-bg, #f0f4ff)", borderRadius: 8, padding: 16, textAlign: "center" }}>
-                    <strong>보유 종목을 추가하면 맞춤 분석을 받을 수 있습니다.</strong>
-                    <p className="panelLead">위 영향 기업 중 보유 종목이 있다면, Input JSON의 portfolio에 추가 후 다시 실행하세요.</p>
-                  </div>
-                ) : null}
+                {deferredFinalResult.finalOutput.mode === "general" ? (() => {
+                  const heldCount = getPortfolioHeldCompanies(rawJson).size;
+                  return heldCount > 0 ? (
+                    <div className="summaryBlock" style={{ background: "var(--accent-bg, #f0f4ff)", borderRadius: 8, padding: 16, textAlign: "center" }}>
+                      <strong>{heldCount}개 종목이 보유 목록에 추가되었습니다.</strong>
+                      <div style={{ marginTop: 8 }}>
+                        <button
+                          type="button"
+                          className="miniButton"
+                          style={{ fontSize: 14, padding: "8px 24px" }}
+                          disabled={isRunning}
+                          onClick={() => handleRun()}
+                        >
+                          {isRunning ? "분석 중..." : "맞춤 Stress Test 재실행"}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="summaryBlock" style={{ background: "var(--accent-bg, #f0f4ff)", borderRadius: 8, padding: 16, textAlign: "center" }}>
+                      <strong>위 기업 중 보유 종목이 있다면 '+ 보유 중' 버튼을 눌러보세요.</strong>
+                      <p className="panelLead">보유 종목 기준 맞춤 분석으로 전환됩니다.</p>
+                    </div>
+                  );
+                })() : null}
 
                 <div className="summaryBlock markdownBlock">
                   <span className="summaryLabel">Markdown Output</span>
