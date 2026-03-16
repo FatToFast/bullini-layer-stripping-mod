@@ -28,11 +28,33 @@ export type StageRecord = {
   error?: string;
 };
 
+// --- Competing Hypotheses (ACH Light) ---
+export type CompetingHypothesis = {
+  label: string;
+  logic: string;
+  evidenceFor: string[];
+  evidenceAgainst: string[];
+  currentWeight: "strongest" | "plausible" | "weak";
+};
+
+// --- Historical Precedents (Base Rate) ---
+export type HistoricalPrecedent = {
+  pattern: string;
+  frequency: string;
+  source: string;
+  relevance: string;
+  confidence: "confirmed" | "estimated" | "scenario";
+  caveat: string;
+};
+
 // --- Final Output (Product-first) ---
 export type FinalOutput = {
+  mode: "personalized" | "general";
   portfolioImpactTable: PortfolioImpactRow[];
   watchTriggers: WatchTriggerRow[];
+  competingHypotheses: CompetingHypothesis[];
   whySections: WhySection[];
+  historicalPrecedents: HistoricalPrecedent[];
   structuralRead: string;
   premortem: PremortermBasic;
   oneLineTake: string;
@@ -44,7 +66,7 @@ export type PortfolioImpactRow = {
   held: "held" | "watchlist" | "neither";
   exposureType: "direct" | "indirect" | "beneficiary" | "no_material_impact";
   whatChangesToday: string;
-  action: string;
+  whatToMonitor: string;
   confidence: "confirmed" | "estimated" | "scenario";
 };
 
