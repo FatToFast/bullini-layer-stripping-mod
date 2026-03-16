@@ -262,6 +262,9 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [inputSnapshotOpen, setInputSnapshotOpen] = useState(false);
   const [runningStage, setRunningStage] = useState<InsightStageName | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("layer0_layer1");
+  const [editableMarkdown, setEditableMarkdown] = useState("");
+  const [userNotes, setUserNotes] = useState("");
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [stageEvaluations, setStageEvaluations] = useState<Partial<Record<InsightStageName, StageEvaluationResult>>>({});
   const [evaluatingStage, setEvaluatingStage] = useState<InsightStageName | null>(null);
   const [searchR1Config, setSearchR1Config] = useState<SearchRoundConfig>({
@@ -279,6 +282,12 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
   const deferredRawJson = useDeferredValue(rawJson);
   const deferredFinalResult = useDeferredValue(finalResult);
+
+  useEffect(() => {
+    if (deferredFinalResult?.finalOutput?.markdownOutput) {
+      setEditableMarkdown(deferredFinalResult.finalOutput.markdownOutput);
+    }
+  }, [deferredFinalResult]);
 
   const effectiveCommonModel = getEffectiveModel(commonModel, commonCustomModel);
   const orderedStageRecords = useMemo(
@@ -1769,6 +1778,26 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                           <div className="metaRow">
                             <span>다음 확인: {row.whatToMonitor}</span>
                           </div>
+                          {(() => {
+                            const raw = row as unknown as Record<string, unknown>;
+                            const indicators = (row.monitoringIndicators ?? raw.monitoring_indicators ?? []) as Array<Record<string, string>>;
+                            return indicators.length > 0 ? (
+                              <details style={{ marginTop: 4 }}>
+                                <summary className="metaRow" style={{ cursor: "pointer" }}>
+                                  <span>모니터링 지표 ({indicators.length})</span>
+                                </summary>
+                                {indicators.map((ind, i) => (
+                                  <div key={`ind-${i}`} className="metaRow" style={{ paddingLeft: 12 }}>
+                                    <span>
+                                      {ind.indicator ?? ind.indicator}: {ind.threshold ?? ind.threshold}
+                                      {ind.data_source || ind.dataSource ? ` — ${ind.data_source ?? ind.dataSource}` : ""}
+                                      {ind.linked_hypothesis || ind.linkedHypothesis ? ` [${ind.linked_hypothesis ?? ind.linkedHypothesis}]` : ""}
+                                    </span>
+                                  </div>
+                                ))}
+                              </details>
+                            ) : null;
+                          })()}
                         </details>
                       );
                     })}

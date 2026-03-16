@@ -89,12 +89,20 @@ export type FinalOutput = {
   markdownOutput: string;
 };
 
+export type MonitoringIndicator = {
+  indicator: string;
+  threshold: string;
+  dataSource: string;
+  linkedHypothesis: string;
+};
+
 export type PortfolioImpactRow = {
   company: string;
   held: "held" | "watchlist" | "neither";
   exposureType: "direct" | "indirect" | "beneficiary" | "no_material_impact";
   whatChangesToday: string;
   whatToMonitor: string;
+  monitoringIndicators: MonitoringIndicator[];
   confidence: "confirmed" | "estimated" | "scenario";
 };
 

@@ -210,13 +210,18 @@ export const STEP5_PROMPT = `역할:
 - beneficiary: 반사이익 가능 (엄격 판정: 물량 전환 경로/선례/기업 코멘트 중 2개 이상)
 - no_material_impact: 현재 확인 가능한 영향 경로 없음
 
-- 각 종목에 "오늘 바뀌는 것"과 "다음에 확인할 데이터"를 1줄씩 써라.
+- 각 종목에 "오늘 바뀌는 것"을 1줄로 써라.
 - confidence를 반드시 표기하라.
-- what_to_monitor는 행동 제안이 아니다. "다음에 확인할 데이터 포인트"를 쓰라.
-  예시 O: "4/15 USTR 의견접수 마감 결과 확인"
-  예시 O: "다음 분기 HBM 출하량 발표 (5월 예정)"
-  예시 X: "비중 축소 고려" ← 투자 행동 제안 금지
-  예시 X: "리스크 관리 필요" ← 회피 표현 금지
+- monitoring_indicators에 3~5개 지표를 포함하라. 각 지표에:
+  - indicator: 구체적 지표명 (예: "SK하이닉스 분기별 HBM 출하량")
+  - threshold: 의미 있는 변화 기준 (예: "전분기 대비 -15% 이상 감소")
+  - data_source: 어디서 확인하는가 (예: "SK하이닉스 실적 발표, 5월 예정")
+  - linked_hypothesis: 이 지표가 어떤 가설과 연결되는가 (예: "H2: 구조적 재편")
+- monitoring_indicators는 행동 제안이 아니다. "무엇을 봐야 하는지 + 얼마면 의미 있는지"를 쓰라.
+  예시 O: indicator "USTR 의견접수 결과", threshold "한국 면제 여부", data_source "USTR 관보, 4/15 이후"
+  예시 O: indicator "HBM 출하량", threshold "전분기 대비 -15%", data_source "SK하이닉스 IR, 5월"
+  예시 X: indicator "리스크 관리" ← 지표가 아님
+  예시 X: threshold "주의 필요" ← 수치가 아님
 
 입력:
 - 사용자 포트폴리오 목록 (빈 배열일 수 있음)
@@ -233,7 +238,15 @@ export const STEP5_PROMPT = `역할:
       "held": "held | watchlist",
       "exposure_type": "direct | indirect | beneficiary | no_material_impact",
       "what_changes_today": "오늘 이 종목에 바뀌는 것 1줄",
-      "what_to_monitor": "다음에 확인할 데이터 포인트 1줄",
+      "what_to_monitor": "다음에 확인할 핵심 데이터 포인트 1줄 (요약용)",
+      "monitoring_indicators": [
+        {
+          "indicator": "구체적 지표명",
+          "threshold": "의미 있는 변화 기준 (수치 또는 이벤트)",
+          "data_source": "확인처 + 시점",
+          "linked_hypothesis": "연결된 가설"
+        }
+      ],
       "line_items": ["revenue", "cost", "margin", "utilization", "capex"],
       "direction": "up | down | neutral | uncertain",
       "confidence": "confirmed | estimated | scenario",
@@ -536,6 +549,14 @@ General Mode markdown 구조:
       "exposure_type": "direct | indirect | beneficiary | no_material_impact",
       "what_changes_today": "",
       "what_to_monitor": "",
+      "monitoring_indicators": [
+        {
+          "indicator": "",
+          "threshold": "",
+          "data_source": "",
+          "linked_hypothesis": ""
+        }
+      ],
       "confidence": "confirmed | estimated | scenario"
     }
   ],
