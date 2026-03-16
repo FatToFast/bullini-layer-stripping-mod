@@ -14,7 +14,7 @@ export function formatAsMarkdown(output: FinalOutput): string {
     parts.push("## Portfolio Impact");
     for (const row of output.portfolioImpactTable) {
       parts.push(
-        `- ${row.company} [${row.held}] ${row.exposureType}: ${row.whatChangesToday} / ${row.action} (${row.confidence})`
+        `- ${row.company} [${row.held}] ${row.exposureType}: ${row.whatChangesToday} / ${row.whatToMonitor} (${row.confidence})`
       );
     }
     parts.push("");
@@ -37,7 +37,7 @@ export function formatAsPlainText(output: FinalOutput): string {
     parts.push(`[Portfolio Impact]`);
     for (const row of output.portfolioImpactTable) {
       parts.push(
-        `- ${row.company} [${row.held}] ${row.exposureType}: ${row.whatChangesToday} / ${row.action} (${row.confidence})`
+        `- ${row.company} [${row.held}] ${row.exposureType}: ${row.whatChangesToday} / ${row.whatToMonitor} (${row.confidence})`
       );
     }
   }

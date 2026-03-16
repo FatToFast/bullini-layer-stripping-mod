@@ -1482,6 +1482,9 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 <div className="summaryBlock">
                   <span className="summaryLabel">One Line Take</span>
                   <div>{deferredFinalResult.finalOutput.oneLineTake}</div>
+                  <span className={`summaryPill ${deferredFinalResult.finalOutput.mode === "personalized" ? "summaryPillAccent" : ""}`}>
+                    {deferredFinalResult.finalOutput.mode === "personalized" ? "Personalized" : "General"}
+                  </span>
                 </div>
 
                 <div className="summaryBlock">
@@ -1490,14 +1493,19 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 </div>
 
                 <div className="tableWrap">
+                  <span className="summaryLabel">
+                    {deferredFinalResult.finalOutput.mode === "personalized"
+                      ? "Portfolio Impact"
+                      : "Affected Entities"}
+                  </span>
                   <table className="table">
                     <thead>
                       <tr>
                         <th>Company</th>
-                        <th>Held</th>
+                        <th>{deferredFinalResult.finalOutput.mode === "personalized" ? "Held" : "Type"}</th>
                         <th>Exposure</th>
                         <th>What Changes Today</th>
-                        <th>Action</th>
+                        <th>What to Monitor</th>
                         <th>Confidence</th>
                       </tr>
                     </thead>
@@ -1508,7 +1516,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                           <td>{row.held}</td>
                           <td>{row.exposureType}</td>
                           <td>{row.whatChangesToday}</td>
-                          <td>{row.action}</td>
+                          <td>{row.whatToMonitor}</td>
                           <td>{row.confidence}</td>
                         </tr>
                       ))}
@@ -1529,6 +1537,52 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   ))}
                 </div>
 
+                {deferredFinalResult.finalOutput.competingHypotheses.length > 0 ? (
+                  <div className="summaryBlock">
+                    <span className="summaryLabel">Competing Hypotheses</span>
+                    <div className="triggerList">
+                      {deferredFinalResult.finalOutput.competingHypotheses.map((h, idx) => {
+                        const raw = h as unknown as Record<string, unknown>;
+                        const evFor = h.evidenceFor ?? (raw.evidence_for as string[]) ?? [];
+                        const evAgainst = h.evidenceAgainst ?? (raw.evidence_against as string[]) ?? [];
+                        const weight = h.currentWeight ?? (raw.current_weight as string) ?? "";
+                        return (
+                          <div key={`hyp-${idx}-${h.label}`} className="listCard">
+                            <strong>{h.label}</strong>
+                            <span className={`summaryPill ${weight === "strongest" ? "summaryPillAccent" : ""}`}>
+                              {weight}
+                            </span>
+                            <div>{h.logic}</div>
+                            <div className="metaRow">
+                              <span>For: {evFor.join(", ")}</span>
+                            </div>
+                            <div className="metaRow">
+                              <span>Against: {evAgainst.join(", ")}</span>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {deferredFinalResult.finalOutput.historicalPrecedents.length > 0 ? (
+                  <div className="summaryBlock">
+                    <span className="summaryLabel">Historical Precedents (Base Rate)</span>
+                    <div className="triggerList">
+                      {deferredFinalResult.finalOutput.historicalPrecedents.map((p, idx) => (
+                        <div key={`prec-${idx}-${p.pattern}`} className="listCard">
+                          <strong>{p.pattern}</strong>
+                          <div>{p.frequency} — {p.source}</div>
+                          <div>{p.relevance}</div>
+                          <div className="metaRow"><span>{p.confidence}</span></div>
+                          {p.caveat ? <div className="metaRow"><span>{p.caveat}</span></div> : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="whyList">
                   {deferredFinalResult.finalOutput.whySections.map((section) => (
                     <div key={section.label} className="listCard">
@@ -1548,6 +1602,13 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   <div>{deferredFinalResult.finalOutput.premortem.earlyWarning}</div>
                   <div>{deferredFinalResult.finalOutput.premortem.ifWrong}</div>
                 </div>
+
+                {deferredFinalResult.finalOutput.mode === "general" ? (
+                  <div className="summaryBlock" style={{ background: "var(--accent-bg, #f0f4ff)", borderRadius: 8, padding: 16, textAlign: "center" }}>
+                    <strong>보유 종목을 추가하면 맞춤 분석을 받을 수 있습니다.</strong>
+                    <p className="panelLead">위 영향 기업 중 보유 종목이 있다면, Input JSON의 portfolio에 추가 후 다시 실행하세요.</p>
+                  </div>
+                ) : null}
 
                 <div className="summaryBlock markdownBlock">
                   <span className="summaryLabel">Markdown Output</span>
