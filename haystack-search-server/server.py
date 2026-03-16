@@ -105,7 +105,7 @@ def build_rag_pipeline() -> Optional[Pipeline]:
 
 
 def build_web_pipeline() -> Optional[Pipeline]:
-    """Build web search pipeline."""
+    """Build web search pipeline. Uses SerperDev if available, DuckDuckGo as fallback."""
     if SERPER_API_KEY:
         try:
             from haystack.components.websearch import SerperDevWebSearch
@@ -123,8 +123,55 @@ def build_web_pipeline() -> Optional[Pipeline]:
             logger.info("Web search pipeline ready (SerperDev)")
             return pipe
         except Exception as e:
-            logger.warning("SerperDev unavailable: %s", e)
-            return None
+            logger.warning("SerperDev unavailable, trying DuckDuckGo fallback: %s", e)
+
+    # DuckDuckGo fallback — no API key needed
+    try:
+        from duckduckgo_search import DDGS
+
+        class DuckDuckGoSearchComponent:
+            """Minimal DuckDuckGo adapter returning Haystack Documents."""
+
+            def __init__(self, top_k: int = 8):
+                self.top_k = top_k
+
+            def run(self, query: str):
+                results = []
+                try:
+                    with DDGS() as ddgs:
+                        for r in ddgs.text(
+                            query, region="kr-kr", max_results=self.top_k
+                        ):
+                            results.append(
+                                Document(
+                                    content=r.get("body", ""),
+                                    meta={
+                                        "title": r.get("title", query),
+                                        "url": r.get("href", ""),
+                                        "source": "DuckDuckGo",
+                                    },
+                                )
+                            )
+                except Exception as e:
+                    logger.error("DuckDuckGo search error: %s", e)
+                return {"documents": results}
+
+        # Wrap in a simple object that the search handler can call
+        class DuckDuckGoPipeline:
+            def __init__(self):
+                self._component = DuckDuckGoSearchComponent()
+
+            def run(self, inputs: dict):
+                query = inputs.get("web_search", {}).get("query", "")
+                return {"web_search": self._component.run(query)}
+
+        logger.info("Web search pipeline ready (DuckDuckGo fallback)")
+        return DuckDuckGoPipeline()  # type: ignore[return-value]
+    except ImportError:
+        logger.warning(
+            "duckduckgo-search not installed — web search disabled. Install with: pip install duckduckgo-search"
+        )
+        return None
     else:
         logger.info("No SERPERDEV_API_KEY set — web search disabled")
         return None
