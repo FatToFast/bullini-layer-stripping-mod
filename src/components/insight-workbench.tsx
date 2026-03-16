@@ -773,9 +773,9 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       <section className="hero">
         <div className="heroCard">
           <span className="kicker">Standalone Localhost App</span>
-          <h1 className="heroTitle">Stress Test</h1>
+          <h1 className="heroTitle">Layer-Stripping Workbench</h1>
           <p className="heroText">
-            뉴스 이벤트에 대한 포트폴리오 스트레스 테스트를 실행합니다. 포트폴리오 없이도 영향받는 기업을 자동으로 분석합니다.
+            프롬프트 → 글 생성 → 편집 → 내보내기 → 리콜 워크플로우를 시험하는 콘솔입니다.
           </p>
         </div>
         <div className="heroMeta">
@@ -1068,7 +1068,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               onClick={handleRun}
               disabled={isRunning || !rawJson.trim()}
             >
-              {isRunning ? "분석 중..." : "Stress Test 실행"}
+              {isRunning ? "Running..." : "Run Pipeline"}
             </button>
             <span className="statusLine">
               {activeStage
@@ -1700,7 +1700,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             {deferredFinalResult?.finalOutput ? (
               <div className="resultGrid">
                 {previousResult && finalOutputComparison ? (
-                  <details className="summaryBlock">
+                  <details className="summaryBlock" open>
                     <summary className="summaryLabel">
                       {`📊 이전 분석과 비교 (${formatStoredDate(previousResult.timestamp)})`}
                     </summary>
@@ -1792,32 +1792,12 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                       : "Affected Entities"}
                   </span>
                   <div className="triggerList">
-                    {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => {
-                      const heldCompanies = getPortfolioHeldCompanies(rawJson);
-                      const isHeld = heldCompanies.has(row.company);
-                      const isGeneral = deferredFinalResult.finalOutput?.mode === "general";
-                      return (
-                        <details key={`${row.company}-${row.held}`} className="listCard">
+                    {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => (
+                        <details key={`${row.company}-${row.held}`} className="listCard" open>
                           <summary>
                             <strong>{row.company}</strong>
                             <span className="summaryPill">{row.exposureType}</span>
-                            {isGeneral ? (
-                              <button
-                                type="button"
-                                className={`summaryPill ${isHeld ? "summaryPillAccent" : ""}`}
-                                style={{ cursor: "pointer", border: "none" }}
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  if (!isHeld) {
-                                    setRawJson(addCompanyToPortfolio(rawJson, row.company));
-                                  }
-                                }}
-                              >
-                                {isHeld ? "✓ 보유 중" : "+ 보유 중"}
-                              </button>
-                            ) : (
-                              <span className="summaryPill">{row.held}</span>
-                            )}
+                            <span className="summaryPill">{row.held}</span>
                             <span className="summaryPill">{row.confidence}</span>
                           </summary>
                           <div className="metaRow">
@@ -1852,7 +1832,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   </div>
                 </div>
 
-                <details className="summaryBlock">
+                <details className="summaryBlock" open>
                   <summary className="summaryLabel">
                     <span>Watch Triggers ({deferredFinalResult.finalOutput.watchTriggers.length})</span>
                     {deferredFinalResult.finalOutput && deferredFinalResult.finalOutput.watchTriggers.length > 0 ? (
@@ -1874,7 +1854,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 </details>
 
                 {deferredFinalResult.finalOutput.competingHypotheses.length > 0 ? (
-                  <details className="summaryBlock">
+                  <details className="summaryBlock" open>
                     <summary className="summaryLabel">
                       <span>Competing Hypotheses ({deferredFinalResult.finalOutput.competingHypotheses.length})</span>
                       {deferredFinalResult.finalOutput.competingHypotheses.length > 0 ? (
@@ -1910,7 +1890,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 ) : null}
 
                 {deferredFinalResult.finalOutput.historicalPrecedents.length > 0 ? (
-                  <details className="summaryBlock">
+                  <details className="summaryBlock" open>
                     <summary className="summaryLabel">
                       <span>Historical Precedents (Base Rate) ({deferredFinalResult.finalOutput.historicalPrecedents.length})</span>
                     </summary>
@@ -1928,7 +1908,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   </details>
                 ) : null}
 
-                <details className="summaryBlock">
+                <details className="summaryBlock" open>
                   <summary className="summaryLabel">
                     <span>Why Sections ({deferredFinalResult.finalOutput.whySections.length})</span>
                   </summary>
@@ -1946,7 +1926,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 </details>
 
                 {deferredFinalResult.finalOutput.inconsistencies?.length > 0 ? (
-                  <details className="summaryBlock">
+                  <details className="summaryBlock" open>
                     <summary className="summaryLabel">
                       <span>뭐가 이상해? ({deferredFinalResult.finalOutput.inconsistencies.length})</span>
                     </summary>
@@ -1967,7 +1947,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 ) : null}
 
                 {deferredFinalResult.finalOutput.narrativeParallels?.length > 0 ? (
-                  <details className="summaryBlock">
+                  <details className="summaryBlock" open>
                     <summary className="summaryLabel">
                       <span>이건 뭐랑 비슷해? ({deferredFinalResult.finalOutput.narrativeParallels.length})</span>
                     </summary>
@@ -1989,7 +1969,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 ) : null}
 
                 {deferredFinalResult.finalOutput.metaAssumptions?.length > 0 ? (
-                  <details className="summaryBlock">
+                  <details className="summaryBlock" open>
                     <summary className="summaryLabel">
                       <span>이 분석의 숨은 전제 ({deferredFinalResult.finalOutput.metaAssumptions.length})</span>
                     </summary>
@@ -2008,7 +1988,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   </details>
                 ) : null}
 
-                <details className="summaryBlock">
+                <details className="summaryBlock" open>
                   <summary className="summaryLabel">
                     <span>Premortem</span>
                     {deferredFinalResult.finalOutput.premortem.coreThesis ? (
@@ -2019,31 +1999,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   <div>{deferredFinalResult.finalOutput.premortem.earlyWarning}</div>
                   <div>{deferredFinalResult.finalOutput.premortem.ifWrong}</div>
                 </details>
-
-                {deferredFinalResult.finalOutput.mode === "general" ? (() => {
-                  const heldCount = getPortfolioHeldCompanies(rawJson).size;
-                  return heldCount > 0 ? (
-                    <div className="summaryBlock" style={{ background: "var(--accent-bg, #f0f4ff)", borderRadius: 8, padding: 16, textAlign: "center" }}>
-                      <strong>{heldCount}개 종목이 보유 목록에 추가되었습니다.</strong>
-                      <div style={{ marginTop: 8 }}>
-                        <button
-                          type="button"
-                          className="miniButton"
-                          style={{ fontSize: 14, padding: "8px 24px" }}
-                          disabled={isRunning}
-                          onClick={() => handleRun()}
-                        >
-                          {isRunning ? "분석 중..." : "맞춤 Stress Test 재실행"}
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="summaryBlock" style={{ background: "var(--accent-bg, #f0f4ff)", borderRadius: 8, padding: 16, textAlign: "center" }}>
-                      <strong>위 기업 중 보유 종목이 있다면 '+ 보유 중' 버튼을 눌러보세요.</strong>
-                      <p className="panelLead">보유 종목 기준 맞춤 분석으로 전환됩니다.</p>
-                    </div>
-                  );
-                })() : null}
 
                 <div className="summaryBlock markdownBlock">
                   <span className="summaryLabel">Markdown Output</span>
