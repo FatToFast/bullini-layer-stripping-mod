@@ -376,7 +376,7 @@ export async function runInsightPipeline(
       step8_result: step8.output,
       portfolio: dataset.portfolio,
     }),
-    { maxTokens: 4000 }
+    { maxTokens: modelSettings?.stages?.output_formatting?.maxTokens ?? modelSettings?.defaults?.maxTokens ?? 8192 }
   );
   if (!step9) return { runId, stages, finalOutput: null };
 

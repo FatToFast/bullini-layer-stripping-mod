@@ -627,8 +627,13 @@ General Mode markdown 구조:
     "early_warning": "",
     "if_wrong": ""
   },
-  "markdown_output": ""
-}`;
+  "markdown_output": "위 JSON 필드를 마크다운으로 렌더링. 구조화된 필드에 이미 있는 내용을 다시 쓰지 마라. 빈 배열 섹션은 생략."
+}
+
+markdown_output 토큰 절약 규칙:
+- markdown_output은 JSON 필드의 요약 렌더링이다. JSON에 있는 데이터를 그대로 반복하지 마라.
+- portfolio_impact_table은 표로, watch_triggers는 목록으로, 나머지는 제목+1~2줄로 요약.
+- 전체 길이 2000자 이내를 목표로 하라. 깊이는 JSON 필드가 담당하고, markdown은 가독성을 담당한다.`;
 
 export const DEFAULT_STAGE_PROMPTS: Record<InsightStageName, string> = {
   input_validation: "",
