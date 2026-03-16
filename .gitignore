@@ -6,3 +6,4 @@ node_modules/
 npm-debug.log*
 tsconfig.tsbuildinfo
 haystack-search-server/.venv/
+runs/

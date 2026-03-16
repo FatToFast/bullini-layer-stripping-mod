@@ -33,9 +33,12 @@ export async function POST(request: Request) {
     return Response.json({ error: "rawJson is required" }, { status: 400 });
   }
 
+  const acceptEncoding = request.headers.get("accept-encoding") ?? "";
+  const supportsGzip = acceptEncoding.includes("gzip");
+
   const encoder = new TextEncoder();
 
-  const stream = new ReadableStream<Uint8Array>({
+  const rawStream = new ReadableStream<Uint8Array>({
     start(controller) {
       void (async () => {
         try {
@@ -65,11 +68,19 @@ export async function POST(request: Request) {
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    },
-  });
+  const headers: Record<string, string> = {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+  };
+
+  if (supportsGzip) {
+    headers["Content-Encoding"] = "gzip";
+    const compressed = rawStream.pipeThrough(
+      new CompressionStream("gzip") as unknown as TransformStream<Uint8Array, Uint8Array>,
+    );
+    return new Response(compressed, { headers });
+  }
+
+  return new Response(rawStream, { headers });
 }

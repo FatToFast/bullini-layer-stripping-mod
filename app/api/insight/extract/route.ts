@@ -68,13 +68,13 @@ export async function POST(request: Request) {
       body.portfolio
     );
 
-    const llmOutput = await callLLM(EXTRACT_SYSTEM_PROMPT, userContent, {
+    const { content } = await callLLM(EXTRACT_SYSTEM_PROMPT, userContent, {
       model: body.modelSettings?.model,
       temperature: body.modelSettings?.temperature ?? 0.15,
       maxTokens: body.modelSettings?.maxTokens ?? 3000,
     });
 
-    const dataset = parseInsightDataset(llmOutput);
+    const dataset = parseInsightDataset(content);
     return Response.json({ dataset }, { status: 200 });
   } catch (error) {
     if (error instanceof HttpError) {

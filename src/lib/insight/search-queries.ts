@@ -1,5 +1,6 @@
 import type { InsightDataset, SearchRoundConfig } from "./types";
 import { callLLM } from "@/lib/providers/llm";
+import { SEARCH_QUERY_TEMPERATURE, SEARCH_QUERY_MAX_TOKENS } from "@/lib/config";
 import {
   SEARCH_R1_SYSTEM,
   SEARCH_R1_DEFAULT_PROMPT,
@@ -51,16 +52,16 @@ export async function generateStep1Queries(
   });
 
   try {
-    const result = await callLLM(
+    const { content } = await callLLM(
       SEARCH_R1_SYSTEM + "\n\n" + userPrompt,
       context,
       {
         model: config.model,
-        temperature: config.temperature ?? 0.3,
-        maxTokens: config.maxTokens ?? 400,
+        temperature: config.temperature ?? SEARCH_QUERY_TEMPERATURE,
+        maxTokens: config.maxTokens ?? SEARCH_QUERY_MAX_TOKENS,
       },
     );
-    const queries = parseQueryArray(result);
+    const queries = parseQueryArray(content);
     return queries.length > 0 ? queries : templateStep1Queries(dataset);
   } catch {
     return templateStep1Queries(dataset);
@@ -83,16 +84,16 @@ export async function generateStep8Queries(
   });
 
   try {
-    const result = await callLLM(
+    const { content } = await callLLM(
       SEARCH_R2_SYSTEM + "\n\n" + userPrompt,
       context,
       {
         model: config.model,
-        temperature: config.temperature ?? 0.3,
-        maxTokens: config.maxTokens ?? 400,
+        temperature: config.temperature ?? SEARCH_QUERY_TEMPERATURE,
+        maxTokens: config.maxTokens ?? SEARCH_QUERY_MAX_TOKENS,
       },
     );
-    const queries = parseQueryArray(result);
+    const queries = parseQueryArray(content);
     return queries.length > 0 ? queries : templateStep8Queries(dataset);
   } catch {
     return templateStep8Queries(dataset);

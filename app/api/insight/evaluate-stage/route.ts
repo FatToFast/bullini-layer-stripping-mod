@@ -40,13 +40,13 @@ export async function POST(request: Request) {
   try {
     const userMessage = buildStageEvaluateUserMessage(stagePrompt, stageOutput);
 
-    const llmOutput = await callLLM(STAGE_EVALUATE_SYSTEM_PROMPT, userMessage, {
+    const { content } = await callLLM(STAGE_EVALUATE_SYSTEM_PROMPT, userMessage, {
       model: body.modelSettings?.model,
       temperature: body.modelSettings?.temperature ?? 0.1,
       maxTokens: body.modelSettings?.maxTokens ?? 3000,
     });
 
-    const result = llmOutput as StageEvaluationResult;
+    const result = content as StageEvaluationResult;
 
     if (
       typeof result.overall_score !== "number" ||

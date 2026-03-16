@@ -25,6 +25,11 @@ export type StageRecord = {
   prompt?: string;
   output?: unknown;
   elapsedMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  cost?: number;
+  model?: string;
   error?: string;
 };
 
@@ -211,6 +216,8 @@ export type SearchEvent = {
   error?: string;
 };
 
+export type LeanStageRecord = Omit<StageRecord, "userContent" | "searchResults">;
+
 export type PipelineEvent =
   | { type: "stage_start"; stage: InsightStageName }
   | { type: "stage_complete"; record: StageRecord }
@@ -244,4 +251,31 @@ export type StageEvaluationResult = {
   overall_score: number;
   summary: string;
   checklist: StageChecklistItem[];
+};
+
+// --- Run Snapshot (for JSON file persistence) ---
+
+export type SearchRoundSnapshot = {
+  round: 1 | 2;
+  queries: string[];
+  results: unknown[];
+  error?: string;
+};
+
+export type RunSnapshot = {
+  id: string;
+  timestamp: string;
+  input: {
+    newsUrl: string;
+    analysisPrompt: string;
+    systemPrompt: string;
+    searchProvider: string;
+    modelSettings: PipelineModelSettings;
+    searchR1Config: SearchRoundConfig;
+    searchR2Config: SearchRoundConfig;
+  };
+  stages: StageRecord[];
+  searchRounds: SearchRoundSnapshot[];
+  finalOutput: FinalOutput | null;
+  evaluations?: Partial<Record<InsightStageName, StageEvaluationResult>>;
 };

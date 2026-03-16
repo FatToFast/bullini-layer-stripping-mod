@@ -1,3 +1,6 @@
+import { TtlCache } from "@/lib/cache";
+import { SEARCH_TIMEOUT_MS, CACHE_SEARCH_TTL_MS, CACHE_SEARCH_MAX_ENTRIES } from "@/lib/config";
+
 export type SearchFact = {
   query: string;
   title: string;
@@ -6,6 +9,8 @@ export type SearchFact = {
   source: string;
   publishedAt?: string;
 };
+
+const searchCache = new TtlCache<SearchFact[]>(CACHE_SEARCH_TTL_MS, CACHE_SEARCH_MAX_ENTRIES);
 
 export type SearchProviderKind = "noop" | "duckduckgo" | "tavily" | "naver" | "perplexity" | "haystack";
 
@@ -99,6 +104,7 @@ async function searchDuckDuckGo(query: string): Promise<SearchFact[]> {
 
   const response = await fetch(url, {
     headers: { Accept: "application/json" },
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -154,6 +160,7 @@ async function searchTavily(query: string): Promise<SearchFact[]> {
       include_raw_content: false,
       time_range: "week",
     }),
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -188,6 +195,7 @@ async function searchNaverNews(query: string): Promise<SearchFact[]> {
       "X-Naver-Client-Id": clientId,
       "X-Naver-Client-Secret": clientSecret,
     },
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -249,6 +257,7 @@ async function searchPerplexity(query: string): Promise<SearchFact[]> {
         search_recency_filter: "month",
       } : {}),
     }),
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -305,6 +314,7 @@ async function searchHaystack(query: string): Promise<SearchFact[]> {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, mode, top_k: 8 }),
+    signal: AbortSignal.timeout(SEARCH_TIMEOUT_MS),
   });
 
   if (!response.ok) {
@@ -329,6 +339,10 @@ export async function searchWithRetry(provider: SearchProvider, query: string, r
     return [];
   }
 
+  const cacheKey = `${provider.kind}:${query}`;
+  const cached = searchCache.get(cacheKey);
+  if (cached) return cached;
+
   const searchFn = provider.kind === "tavily"
     ? searchTavily
     : provider.kind === "naver"
@@ -339,15 +353,17 @@ export async function searchWithRetry(provider: SearchProvider, query: string, r
           ? searchHaystack
           : searchDuckDuckGo;
 
-  let lastError: unknown;
+  return searchCache.getOrSet(cacheKey, async () => {
+    let lastError: unknown;
 
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      return await searchFn(query);
-    } catch (error) {
-      lastError = error;
+    for (let attempt = 0; attempt <= retries; attempt += 1) {
+      try {
+        return await searchFn(query);
+      } catch (error) {
+        lastError = error;
+      }
     }
-  }
 
-  throw lastError instanceof Error ? lastError : new Error("Search failed");
+    throw lastError instanceof Error ? lastError : new Error("Search failed");
+  });
 }

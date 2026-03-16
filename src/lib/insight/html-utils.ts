@@ -1,3 +1,6 @@
+import { TtlCache } from "@/lib/cache";
+import { CACHE_HTML_TTL_MS, CACHE_HTML_MAX_ENTRIES } from "@/lib/config";
+
 export class HttpError extends Error {
   status: number;
 
@@ -6,6 +9,8 @@ export class HttpError extends Error {
     this.status = status;
   }
 }
+
+const htmlCache = new TtlCache<string>(CACHE_HTML_TTL_MS, CACHE_HTML_MAX_ENTRIES);
 
 export function isHttpUrl(url: string) {
   return url.startsWith("http://") || url.startsWith("https://");
@@ -28,35 +33,37 @@ export function stripHtmlToText(html: string) {
 }
 
 export async function fetchArticleHtml(url: string) {
-  const abortController = new AbortController();
-  const timeoutId = setTimeout(() => abortController.abort(), 15_000);
+  return htmlCache.getOrSet(url, async () => {
+    const abortController = new AbortController();
+    const timeoutId = setTimeout(() => abortController.abort(), 15_000);
 
-  try {
-    const response = await fetch(url, {
-      method: "GET",
-      signal: abortController.signal,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; InsightExtractor/1.0)",
-      },
-    });
+    try {
+      const response = await fetch(url, {
+        method: "GET",
+        signal: abortController.signal,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; InsightExtractor/1.0)",
+        },
+      });
 
-    if (!response.ok) {
-      throw new HttpError(`Failed to fetch URL: ${response.status}`, 400);
-    }
+      if (!response.ok) {
+        throw new HttpError(`Failed to fetch URL: ${response.status}`, 400);
+      }
 
-    return await response.text();
-  } catch (error) {
-    if (error instanceof HttpError) {
-      throw error;
+      return await response.text();
+    } catch (error) {
+      if (error instanceof HttpError) {
+        throw error;
+      }
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new HttpError("Fetching URL timed out after 15 seconds", 400);
+      }
+      throw new HttpError(
+        `Failed to fetch URL: ${error instanceof Error ? error.message : "Unknown error"}`,
+        400
+      );
+    } finally {
+      clearTimeout(timeoutId);
     }
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new HttpError("Fetching URL timed out after 15 seconds", 400);
-    }
-    throw new HttpError(
-      `Failed to fetch URL: ${error instanceof Error ? error.message : "Unknown error"}`,
-      400
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  });
 }

@@ -1,5 +1,48 @@
 import type { InsightStageName, StageRecord } from "./types";
 
+type StageLlmUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cost?: number;
+};
+
+type StageLlmResult = {
+  content: unknown;
+  usage: StageLlmUsage | null;
+  model: string;
+};
+
+function isStageLlmUsage(value: unknown): value is StageLlmUsage {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.promptTokens === "number" &&
+    typeof candidate.completionTokens === "number" &&
+    typeof candidate.totalTokens === "number" &&
+    (candidate.cost === undefined || typeof candidate.cost === "number")
+  );
+}
+
+function isLlmResult(value: unknown): value is StageLlmResult {
+  if (value === null || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  const usage = candidate.usage;
+
+  return (
+    "content" in candidate &&
+    "usage" in candidate &&
+    typeof candidate.model === "string" &&
+    (usage === null || isStageLlmUsage(usage))
+  );
+}
+
 export type StageInput = {
   stageName: InsightStageName;
   input: unknown;
@@ -10,12 +53,15 @@ export type StageInput = {
 
 export async function runStage(
   stageInput: StageInput,
-  executor: () => Promise<unknown>
+  executor: () => Promise<StageLlmResult | unknown>
 ): Promise<StageRecord> {
   const startTime = Date.now();
 
   try {
-    const output = await executor();
+    const raw = await executor();
+    const output = isLlmResult(raw) ? raw.content : raw;
+    const usage = isLlmResult(raw) ? raw.usage : null;
+    const model = isLlmResult(raw) ? raw.model : undefined;
     const elapsedMs = Date.now() - startTime;
 
     return {
@@ -27,6 +73,15 @@ export async function runStage(
       prompt: stageInput.prompt,
       output,
       elapsedMs,
+      ...(usage
+        ? {
+            promptTokens: usage.promptTokens,
+            completionTokens: usage.completionTokens,
+            totalTokens: usage.totalTokens,
+            cost: usage.cost,
+          }
+        : {}),
+      ...(model ? { model } : {}),
     };
   } catch (error) {
     const elapsedMs = Date.now() - startTime;

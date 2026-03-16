@@ -131,6 +131,78 @@ export const MODEL_GROUPS: ModelGroup[] = [
   },
 ];
 
+/**
+ * Curated model list for Search R1/R2 query generation dropdowns.
+ * Excludes heavy reasoning models (o3, Sonnet 4.5, Gemini Pro) — overkill for search queries.
+ */
+export const SEARCH_MODEL_GROUPS: ModelGroup[] = [
+  {
+    label: "검색 내장 (Search-Embedded)",
+    options: [
+      {
+        value: "perplexity/sonar",
+        label: "Perplexity Sonar",
+        note: "웹 검색 내장, 빠른 응답 ($1/M)",
+      },
+      {
+        value: "perplexity/sonar-pro",
+        label: "Perplexity Sonar Pro",
+        note: "고품질 검색, 더 많은 인용 ($3/M)",
+      },
+    ],
+  },
+  {
+    label: "쿼리 생성 추천 (Fast Query Gen)",
+    options: [
+      {
+        value: "x-ai/grok-4.1-fast",
+        label: "Grok 4.1 Fast",
+        note: "빠르고 정확한 범용 ($0.20/M)",
+      },
+      {
+        value: "openai/gpt-4.1-mini",
+        label: "GPT-4.1 Mini",
+        note: "속도와 비용 균형 ($0.50/M)",
+      },
+      {
+        value: "google/gemini-2.5-flash",
+        label: "Gemini 2.5 Flash",
+        note: "안정적 고속 ($0.30/M)",
+      },
+      {
+        value: "anthropic/claude-haiku-4.5",
+        label: "Claude Haiku 4.5",
+        note: "Claude 경량, 높은 품질 ($1/M)",
+      },
+    ],
+  },
+  {
+    label: "경량/저가 (Budget)",
+    options: [
+      {
+        value: "openai/gpt-4.1-nano",
+        label: "GPT-4.1 Nano",
+        note: "최저가 OpenAI ($0.10/M)",
+      },
+      {
+        value: "google/gemini-2.5-flash-lite",
+        label: "Gemini 2.5 Flash-Lite",
+        note: "최저가 Gemini ($0.10/M)",
+      },
+      {
+        value: "google/gemini-3.1-flash-lite-preview",
+        label: "Gemini 3.1 Flash-Lite (preview)",
+        note: "최신 경량 프리뷰 ($0.25/M)",
+      },
+      {
+        value: "deepseek/deepseek-v3.2",
+        label: "DeepSeek V3.2",
+        note: "효율적 오픈소스 ($0.15/M)",
+      },
+    ],
+  },
+];
+
 export const TUNABLE_STAGES: InsightStageName[] = [
   "layer0_layer1",
   "event_classification",

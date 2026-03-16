@@ -58,7 +58,7 @@ export function buildExtractUserMessage(
     : "\n[ANALYSIS_PROMPT]\n(none)\n";
 
   const portfolioSection = portfolio && portfolio.length > 0
-    ? `\n[PORTFOLIO]\n${JSON.stringify(portfolio, null, 2)}\n`
+    ? `\n[PORTFOLIO]\n${JSON.stringify(portfolio)}\n`
     : "\n[PORTFOLIO]\n(none provided; infer relevant companies from article)\n";
 
   return `[TASK]\nConvert the article into a valid InsightDataset JSON object.\n${analysisSection}${portfolioSection}\n[ARTICLE_TEXT]\n${articleText}`;

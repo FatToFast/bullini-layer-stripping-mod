@@ -28,7 +28,6 @@ export const STAGE_DESCRIPTIONS: Record<InsightStageName, string> = {
   output_formatting: "포트폴리오 영향을 최상단에, 해설을 근거로 후행하는 Product-first 출력을 생성합니다",
 };
 
-// Ordered stage list for rendering
 export const STAGE_ORDER: InsightStageName[] = [
   "input_validation",
   "layer0_layer1",
@@ -41,3 +40,7 @@ export const STAGE_ORDER: InsightStageName[] = [
   "evidence_consolidation",
   "output_formatting",
 ];
+
+export const STAGE_INDEX: Record<InsightStageName, number> = Object.fromEntries(
+  STAGE_ORDER.map((stage, idx) => [stage, idx])
+) as Record<InsightStageName, number>;
