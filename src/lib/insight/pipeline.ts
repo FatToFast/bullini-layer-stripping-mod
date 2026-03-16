@@ -11,6 +11,17 @@ import type {
   StageRecord,
 } from "./types";
 import { normalizeRawInput } from "./normalizers";
+
+function snakeToCamel(obj: unknown): unknown {
+  if (obj === null || obj === undefined || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return obj.map(snakeToCamel);
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    const camelKey = key.replace(/_([a-z])/g, (_, c: string) => c.toUpperCase());
+    result[camelKey] = snakeToCamel(value);
+  }
+  return result;
+}
 import { runStage } from "./stage-runner";
 import { getSearchProvider, searchWithRetry, type SearchFact, type SearchProviderKind } from "@/lib/providers/search";
 import { callLLM } from "@/lib/providers/llm";
@@ -372,21 +383,21 @@ export async function runInsightPipeline(
   // ── Build final output ──
   let finalOutput: FinalOutput | null = null;
   if (step9.status === "success" && step9.output) {
-    const out = step9.output as Record<string, unknown>;
+    const normalized = snakeToCamel(step9.output) as Record<string, unknown>;
     finalOutput = {
-      mode: (out.mode as FinalOutput["mode"]) ?? "general",
-      oneLineTake: (out.one_line_take as string) ?? "",
-      portfolioImpactTable: Array.isArray(out.portfolio_impact_table) ? out.portfolio_impact_table as FinalOutput["portfolioImpactTable"] : [],
-      watchTriggers: Array.isArray(out.watch_triggers) ? out.watch_triggers as FinalOutput["watchTriggers"] : [],
-      competingHypotheses: Array.isArray(out.competing_hypotheses) ? out.competing_hypotheses as FinalOutput["competingHypotheses"] : [],
-      whySections: Array.isArray(out.why_sections) ? out.why_sections as FinalOutput["whySections"] : [],
-      historicalPrecedents: Array.isArray(out.historical_precedents) ? out.historical_precedents as FinalOutput["historicalPrecedents"] : [],
-      inconsistencies: Array.isArray(out.inconsistencies) ? out.inconsistencies as FinalOutput["inconsistencies"] : [],
-      narrativeParallels: Array.isArray(out.narrative_parallels) ? out.narrative_parallels as FinalOutput["narrativeParallels"] : [],
-      metaAssumptions: Array.isArray(out.meta_assumptions) ? out.meta_assumptions as FinalOutput["metaAssumptions"] : [],
-      structuralRead: (out.structural_read as string) ?? "",
-      premortem: (out.premortem as FinalOutput["premortem"]) ?? { coreThesis: "", primaryFailure: "", earlyWarning: "", ifWrong: "" },
-      markdownOutput: (out.markdown_output as string) ?? "",
+      mode: (normalized.mode as FinalOutput["mode"]) ?? "general",
+      oneLineTake: (normalized.oneLineTake as string) ?? "",
+      portfolioImpactTable: Array.isArray(normalized.portfolioImpactTable) ? normalized.portfolioImpactTable as FinalOutput["portfolioImpactTable"] : [],
+      watchTriggers: Array.isArray(normalized.watchTriggers) ? normalized.watchTriggers as FinalOutput["watchTriggers"] : [],
+      competingHypotheses: Array.isArray(normalized.competingHypotheses) ? normalized.competingHypotheses as FinalOutput["competingHypotheses"] : [],
+      whySections: Array.isArray(normalized.whySections) ? normalized.whySections as FinalOutput["whySections"] : [],
+      historicalPrecedents: Array.isArray(normalized.historicalPrecedents) ? normalized.historicalPrecedents as FinalOutput["historicalPrecedents"] : [],
+      inconsistencies: Array.isArray(normalized.inconsistencies) ? normalized.inconsistencies as FinalOutput["inconsistencies"] : [],
+      narrativeParallels: Array.isArray(normalized.narrativeParallels) ? normalized.narrativeParallels as FinalOutput["narrativeParallels"] : [],
+      metaAssumptions: Array.isArray(normalized.metaAssumptions) ? normalized.metaAssumptions as FinalOutput["metaAssumptions"] : [],
+      structuralRead: (normalized.structuralRead as string) ?? "",
+      premortem: (normalized.premortem as FinalOutput["premortem"]) ?? { coreThesis: "", primaryFailure: "", earlyWarning: "", ifWrong: "" },
+      markdownOutput: (normalized.markdownOutput as string) ?? "",
     };
   }
 
