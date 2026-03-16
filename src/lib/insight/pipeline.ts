@@ -375,6 +375,7 @@ export async function runInsightPipeline(
       step7_result: step7.output,
       step8_result: step8.output,
       portfolio: dataset.portfolio,
+      persona: modelSettings?.persona ?? "professional",
     }),
     { maxTokens: modelSettings?.stages?.output_formatting?.maxTokens ?? modelSettings?.defaults?.maxTokens ?? 8192 }
   );
@@ -386,6 +387,7 @@ export async function runInsightPipeline(
     const normalized = snakeToCamel(step9.output) as Record<string, unknown>;
     finalOutput = {
       mode: (normalized.mode as FinalOutput["mode"]) ?? "general",
+      persona: (normalized.persona as FinalOutput["persona"]) ?? "professional",
       oneLineTake: (normalized.oneLineTake as string) ?? "",
       portfolioImpactTable: Array.isArray(normalized.portfolioImpactTable) ? normalized.portfolioImpactTable as FinalOutput["portfolioImpactTable"] : [],
       watchTriggers: Array.isArray(normalized.watchTriggers) ? normalized.watchTriggers as FinalOutput["watchTriggers"] : [],

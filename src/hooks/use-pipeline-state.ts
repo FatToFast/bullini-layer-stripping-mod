@@ -11,6 +11,7 @@ import type {
   FinalOutput,
   InsightRunResult,
   InsightStageName,
+  ReaderPersona,
   SearchRoundConfig,
   StageEvaluationResult,
   StageRecord,
@@ -96,6 +97,7 @@ export function usePipelineState(defaultModel: string, defaultSystemPrompt: stri
   const [commonTemperature, setCommonTemperature] = useState(DEFAULT_TEMPERATURE);
   const [commonMaxTokens, setCommonMaxTokens] = useState(DEFAULT_MAX_TOKENS);
   const [preset, setPreset] = useState<"custom" | "deep" | "balanced" | "quick">("custom");
+  const [persona, setPersona] = useState<ReaderPersona>("professional");
   const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const [stageConfigs, setStageConfigs] = useState<Record<InsightStageName, StageUiConfig>>(
@@ -159,6 +161,8 @@ export function usePipelineState(defaultModel: string, defaultSystemPrompt: stri
     setCommonMaxTokens,
     preset,
     setPreset,
+    persona,
+    setPersona,
     systemPrompt,
     setSystemPrompt,
     systemPromptOpen,

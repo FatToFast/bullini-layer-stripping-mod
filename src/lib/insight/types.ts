@@ -73,8 +73,11 @@ export type MetaAssumption = {
 };
 
 // --- Final Output (Product-first) ---
+export type ReaderPersona = "beginner" | "retail" | "professional" | "institutional";
+
 export type FinalOutput = {
   mode: "personalized" | "general";
+  persona: ReaderPersona;
   portfolioImpactTable: PortfolioImpactRow[];
   watchTriggers: WatchTriggerRow[];
   competingHypotheses: CompetingHypothesis[];
@@ -190,6 +193,7 @@ export type StageModelOverrides = Partial<Record<InsightStageName, ModelConfigOv
 export type PipelineModelSettings = {
   defaults?: ModelConfigOverride;
   stages?: StageModelOverrides;
+  persona?: ReaderPersona;
 };
 
 export type SearchRoundConfig = {

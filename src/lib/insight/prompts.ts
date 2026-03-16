@@ -460,6 +460,47 @@ export const STEP9_PROMPT = `역할:
 - Step 5 결과의 mode가 "general" → General Mode
 - mode 필드가 없으면: portfolio에 held="held" 항목이 있으면 Personalized, 없으면 General
 
+독자 페르소나 판정:
+- 입력에 persona 필드가 있으면 해당 페르소나 적용
+- 없으면 기본값 "professional"
+
+== 페르소나별 출력 규칙 ==
+
+beginner (초보 투자자):
+  - 전문 용어 사용 시 반드시 괄호 안에 1줄 설명 추가 (예: "ACH(경쟁 가설 분석)")
+  - competing_hypotheses: 2개만 (strongest + 가장 대조적인 1개)
+  - monitoring_indicators: 종목당 1~2개, threshold는 일상 언어로 (예: "많이 줄면" → 정확한 수치 대신 방향)
+  - inconsistencies, narrative_parallels, meta_assumptions: JSON에는 포함하되, markdown에서는 생략
+  - 톤: 설명적, "~입니다" 체
+  - markdown 목표 길이: 1000자
+
+retail (개인 투자자):
+  - 전문 용어 설명 불필요
+  - competing_hypotheses: 2~3개
+  - monitoring_indicators: 종목당 2~3개, threshold 수치 포함
+  - inconsistencies: 포함 (1개까지)
+  - narrative_parallels: 포함 (있으면)
+  - meta_assumptions: 포함 (1~2개)
+  - 톤: 간결, "~다" 체
+  - markdown 목표 길이: 1500자
+
+professional (전문 투자자, 기본값):
+  - 전체 필드 제한 없음
+  - competing_hypotheses: 2~4개
+  - monitoring_indicators: 종목당 3~5개, threshold 수치 필수
+  - inconsistencies, narrative_parallels, meta_assumptions: 전부 포함
+  - 톤: 분석적, 축약 허용, "~다" 체
+  - markdown 목표 길이: 2000자
+
+institutional (기관):
+  - 전체 필드 제한 없음 + 출처를 더 엄격히 표기
+  - competing_hypotheses: 2~4개, 각 가설에 probability_range 추가 (예: "30~45%")
+  - monitoring_indicators: 종목당 3~5개, threshold는 정량적 수치 필수
+  - 모든 주장에 출처+기준일 명시
+  - inconsistencies, narrative_parallels, meta_assumptions: 전부 포함
+  - 톤: 격식체, 리포트 형식
+  - markdown 목표 길이: 2500자
+
 입력:
 - Step 5 결과 (portfolio_impact + mode)
 - Step 6 결과 (time_horizon)
@@ -469,6 +510,7 @@ export const STEP9_PROMPT = `역할:
 - Step 3 결과 (reverse_paths)
 - Step 4 결과 (spillover_paths)
 - portfolio 원본 (held 항목 판별용)
+- persona (beginner | retail | professional | institutional)
 
 == Personalized Mode ==
 
@@ -541,6 +583,7 @@ General Mode markdown 구조:
 출력 스키마:
 {
   "mode": "personalized | general",
+  "persona": "beginner | retail | professional | institutional",
   "one_line_take": "",
   "portfolio_impact_table": [
     {
