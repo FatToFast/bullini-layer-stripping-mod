@@ -194,6 +194,43 @@ function formatStoredDate(timestamp: number) {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
+function getMarkdownSections(markdown: string) {
+  return Array.from(markdown.matchAll(/^#{1,6}\s+(.+)$/gm), (match) => match[1].trim());
+}
+
+function getSectionDifference(source: string[], target: string[]) {
+  const targetSet = new Set(target);
+  return source.filter((section) => !targetSet.has(section));
+}
+
+function renderComparedMarkdown(primary: string, secondary: string, variant: "a" | "b") {
+  const primaryLines = primary.replace(/\r\n/g, "\n").split("\n");
+  const secondaryLines = secondary.replace(/\r\n/g, "\n").split("\n");
+
+  return (
+    <pre className="codeBlock" style={{ whiteSpace: "pre-wrap" }}>
+      {primaryLines.map((line, index) => {
+        const changed = line !== (secondaryLines[index] ?? "");
+        return (
+          <span
+            key={`${variant}-${index}`}
+            style={{
+              display: "block",
+              backgroundColor: changed
+                ? variant === "a"
+                  ? "rgba(239, 68, 68, 0.12)"
+                  : "rgba(34, 197, 94, 0.12)"
+                : "transparent",
+            }}
+          >
+            {line || " "}
+          </span>
+        );
+      })}
+    </pre>
+  );
+}
+
 function getWatchTriggerKey(trigger: FinalOutput["watchTriggers"][number]) {
   return stringifyValue(trigger);
 }
@@ -263,11 +300,18 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [runningStage, setRunningStage] = useState<InsightStageName | null>(null);
   const [activeTab, setActiveTab] = useState<TabId>("layer0_layer1");
   const [editableMarkdown, setEditableMarkdown] = useState("");
+  const [outputTemplate, setOutputTemplate] = useState<"full" | "summary" | "social">("full");
   const [userNotes, setUserNotes] = useState("");
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [stageEvaluations, setStageEvaluations] = useState<Partial<Record<InsightStageName, StageEvaluationResult>>>({});
   const [evaluatingStage, setEvaluatingStage] = useState<InsightStageName | null>(null);
   const [analysisHistory, setAnalysisHistory] = useState<StoredAnalysis[]>([]);
+  const [historySearch, setHistorySearch] = useState("");
+  const [abMode, setAbMode] = useState(false);
+  const [abStage, setAbStage] = useState<InsightStageName | null>(null);
+  const [abPromptOverride, setAbPromptOverride] = useState("");
+  const [abResult, setAbResult] = useState<InsightRunResult | null>(null);
+  const [abRunning, setAbRunning] = useState(false);
   const [searchR1Config, setSearchR1Config] = useState<SearchRoundConfig>({
     prompt: SEARCH_R1_DEFAULT_PROMPT,
     model: "",
@@ -306,8 +350,22 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     }
   }, []);
 
+  useEffect(() => {
+    if (!abMode) {
+      setAbStage(null);
+      setAbPromptOverride("");
+      setAbResult(null);
+    }
+  }, [abMode]);
+
+  useEffect(() => {
+    if (!abStage) return;
+    setAbPromptOverride(stageConfigs[abStage].prompt || DEFAULT_STAGE_PROMPTS[abStage]);
+  }, [abStage]);
+
   function loadAnalysis(analysis: StoredAnalysis) {
     setFinalResult({ runId: `history-${analysis.eventId}`, stages: [], finalOutput: analysis.output });
+    setAbResult(null);
     setRawJson("");
     setEditableMarkdown(analysis.output.markdownOutput);
     setUserNotes("");
@@ -375,12 +433,32 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     };
   }, [deferredFinalResult, previousResult]);
 
-  function buildModelSettings(): PipelineModelSettings {
+  const abComparison = useMemo(() => {
+    if (!deferredFinalResult?.finalOutput || !abResult?.finalOutput) return null;
+
+    const markdownA = deferredFinalResult.finalOutput.markdownOutput;
+    const markdownB = abResult.finalOutput.markdownOutput;
+    const sectionsA = getMarkdownSections(markdownA);
+    const sectionsB = getMarkdownSections(markdownB);
+
+    return {
+      markdownA,
+      markdownB,
+      charCountA: markdownA.length,
+      charCountB: markdownB.length,
+      onlyInA: getSectionDifference(sectionsA, sectionsB),
+      onlyInB: getSectionDifference(sectionsB, sectionsA),
+      oneLineTakeA: deferredFinalResult.finalOutput.oneLineTake,
+      oneLineTakeB: abResult.finalOutput.oneLineTake,
+    };
+  }, [abResult, deferredFinalResult]);
+
+  function buildModelSettings(configs = stageConfigs): PipelineModelSettings {
     const stages = Object.fromEntries(
       tunedStages
-        .filter((stage) => stageConfigs[stage].enabled)
+        .filter((stage) => configs[stage].enabled)
         .map((stage) => {
-          const config = stageConfigs[stage];
+          const config = configs[stage];
           const defaultPrompt = DEFAULT_STAGE_PROMPTS[stage];
           const hasCustomPrompt = config.prompt.trim() !== "" && config.prompt.trim() !== defaultPrompt.trim();
           return [
@@ -538,94 +616,159 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     return r1 || r2 ? { searchR1Config: r1, searchR2Config: r2 } : undefined;
   }
 
-  async function handleRun() {
+  async function runFullPipeline(
+    modelSettings: PipelineModelSettings,
+    options?: { applyFinalResult?: boolean; persistResult?: boolean; updatePreviousResult?: boolean }
+  ) {
+    const applyFinalResult = options?.applyFinalResult ?? true;
+    const persistResult = options?.persistResult ?? true;
+    const updatePreviousResult = options?.updatePreviousResult ?? true;
     const eventId = getEventIdFromRawJson(rawJson);
-    setPreviousResult(eventId ? readStoredAnalysis(eventId) : null);
-    setIsRunning(true);
+
+    if (updatePreviousResult) {
+      setPreviousResult(eventId ? readStoredAnalysis(eventId) : null);
+    }
+
     setError(null);
     setActiveStage("input_validation");
     setStageRecords([]);
     setSearchRounds([]);
-    setFinalResult(null);
-    try {
-      const result = await runInsightApiStream(
-        rawJson,
-        buildModelSettings(),
-        {
-          onStageStart: (stage) => {
-            startTransition(() => {
-              setActiveStage(stage);
-              setStageRecords((prev) => {
-                const existing = prev.find((record) => record.stage === stage);
-                if (existing) return prev;
-                return [...prev, { stage, status: "running", input: null }];
-              });
-            });
-          },
-          onStageComplete: (record) => {
-            startTransition(() => {
-              setActiveStage(record.stage);
-              setStageRecords((prev) => {
-                const next = prev.filter((item) => item.stage !== record.stage);
-                return [...next, record];
-              });
-            });
-          },
-          onSearchStart: (round, queries) => {
-            startTransition(() => {
-              setSearchRounds((prev) => [
-                ...prev.filter((item) => item.round !== round),
-                { round, queries, results: [] },
-              ]);
-            });
-          },
-          onSearchComplete: (round, results, searchError) => {
-            startTransition(() => {
-              setSearchRounds((prev) => [
-                ...prev.filter((item) => item.round !== round),
-                {
-                  round,
-                  queries: prev.find((item) => item.round === round)?.queries ?? [],
-                  results,
-                  error: searchError,
-                },
-              ]);
-            });
-          },
-          onComplete: (completed) => {
-            startTransition(() => {
-              setFinalResult(completed);
-              setActiveStage(null);
-            });
-          },
-          onError: (message) => {
-            startTransition(() => setError(message));
-          },
-        },
-        searchProvider,
-        undefined,
-        undefined,
-        systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined,
-        buildSearchConfigs()
-      );
+    if (applyFinalResult) {
+      setFinalResult(null);
+    }
 
+    const result = await runInsightApiStream(
+      rawJson,
+      modelSettings,
+      {
+        onStageStart: (stage) => {
+          startTransition(() => {
+            setActiveStage(stage);
+            setStageRecords((prev) => {
+              const existing = prev.find((record) => record.stage === stage);
+              if (existing) return prev;
+              return [...prev, { stage, status: "running", input: null }];
+            });
+          });
+        },
+        onStageComplete: (record) => {
+          startTransition(() => {
+            setActiveStage(record.stage);
+            setStageRecords((prev) => {
+              const next = prev.filter((item) => item.stage !== record.stage);
+              return [...next, record];
+            });
+          });
+        },
+        onSearchStart: (round, queries) => {
+          startTransition(() => {
+            setSearchRounds((prev) => [
+              ...prev.filter((item) => item.round !== round),
+              { round, queries, results: [] },
+            ]);
+          });
+        },
+        onSearchComplete: (round, results, searchError) => {
+          startTransition(() => {
+            setSearchRounds((prev) => [
+              ...prev.filter((item) => item.round !== round),
+              {
+                round,
+                queries: prev.find((item) => item.round === round)?.queries ?? [],
+                results,
+                error: searchError,
+              },
+            ]);
+          });
+        },
+        onComplete: (completed) => {
+          startTransition(() => {
+            if (applyFinalResult) {
+              setFinalResult(completed);
+            }
+            setActiveStage(null);
+          });
+        },
+        onError: (message) => {
+          startTransition(() => setError(message));
+        },
+      },
+      searchProvider,
+      undefined,
+      undefined,
+      systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined,
+      buildSearchConfigs()
+    );
+
+    if (applyFinalResult) {
       setFinalResult(result);
-      if (eventId && result.finalOutput && typeof window !== "undefined") {
-        try {
-          window.localStorage.setItem(
-            `${ANALYSIS_STORAGE_PREFIX}${eventId}`,
-            JSON.stringify({
-              timestamp: Date.now(),
-              eventId,
-              output: result.finalOutput,
-            })
-          );
-        } catch {
-        }
+    }
+
+    if (eventId && persistResult && result.finalOutput && typeof window !== "undefined") {
+      try {
+        window.localStorage.setItem(
+          `${ANALYSIS_STORAGE_PREFIX}${eventId}`,
+          JSON.stringify({
+            timestamp: Date.now(),
+            eventId,
+            output: result.finalOutput,
+          })
+        );
+      } catch {
       }
+    }
+
+    return result;
+  }
+
+  async function handleRun() {
+    setIsRunning(true);
+    setAbResult(null);
+    try {
+      await runFullPipeline(buildModelSettings());
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "분석 실행에 실패했습니다.");
     } finally {
+      setIsRunning(false);
+      setActiveStage(null);
+    }
+  }
+
+  async function handleRunAB() {
+    if (!abStage || !abPromptOverride.trim()) return;
+
+    setAbRunning(true);
+    setIsRunning(true);
+    setAbResult(null);
+
+    try {
+      const resultA = await runFullPipeline(buildModelSettings());
+      const variantStageConfigs = {
+        ...stageConfigs,
+        [abStage]: {
+          ...stageConfigs[abStage],
+          enabled: true,
+          prompt: abPromptOverride,
+        },
+      };
+
+      setStageConfigs(variantStageConfigs);
+
+      try {
+        const resultB = await runFullPipeline(buildModelSettings(variantStageConfigs), {
+          applyFinalResult: false,
+          persistResult: false,
+          updatePreviousResult: false,
+        });
+        setAbResult(resultB);
+        setFinalResult(resultA);
+      } finally {
+        setStageConfigs(stageConfigs);
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "A/B 비교 실행에 실패했습니다.");
+    } finally {
+      setAbRunning(false);
       setIsRunning(false);
       setActiveStage(null);
     }
@@ -744,20 +887,21 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     setEvaluatingStage(null);
   }
 
-  function handleCopy(format: "full" | "summary" | "one-liner") {
+  function handleCopy() {
     let textToCopy = "";
-    if (format === "full") {
+    const output = deferredFinalResult?.finalOutput;
+
+    if (!output) return;
+
+    if (outputTemplate === "full") {
       textToCopy = editableMarkdown;
-    } else if (format === "summary") {
-      const output = deferredFinalResult?.finalOutput;
-      if (output) {
-        const portfolioImpactSummary = output.portfolioImpactTable
-          .map((row) => `${row.company} (${row.exposureType}): ${row.whatChangesToday}`)
-          .join("\n");
-        textToCopy = `${output.oneLineTake}\n\n${output.structuralRead}\n\n${portfolioImpactSummary}`;
-      }
-    } else if (format === "one-liner") {
-      textToCopy = deferredFinalResult?.finalOutput?.oneLineTake || "";
+    } else if (outputTemplate === "summary") {
+      const portfolioImpactSummary = output.portfolioImpactTable
+        .map((row) => `${row.company} (${row.exposureType}): ${row.whatChangesToday}`)
+        .join("\n");
+      textToCopy = `${output.oneLineTake}\n\n${output.structuralRead}\n\n${portfolioImpactSummary}`;
+    } else if (outputTemplate === "social") {
+      textToCopy = `${output.oneLineTake} #투자분석`;
     }
 
     if (textToCopy) {
@@ -767,6 +911,45 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       });
     }
   }
+
+  const qualityMetrics = useMemo(() => {
+    const output = deferredFinalResult?.finalOutput;
+    if (!output) return null;
+
+    const markdownOutput = output.markdownOutput || "";
+    const charCount = markdownOutput.length;
+
+    const sectionCount =
+      output.portfolioImpactTable.length +
+      output.watchTriggers.length +
+      output.competingHypotheses.length +
+      output.whySections.length +
+      output.historicalPrecedents.length +
+      (output.structuralRead ? 1 : 0) +
+      (output.premortem?.coreThesis ? 1 : 0);
+
+    const cjkMatches = markdownOutput.match(/[一-鿿]/g);
+    const cjkRatio = cjkMatches ? (cjkMatches.length / charCount) * 100 : 0;
+
+    const advisoryWords = ["매수", "매도", "비중 축소", "비중 확대", "적극 매수", "손절"];
+    const advisoryCheck = advisoryWords.some((word) => markdownOutput.includes(word)) ? "Fail" : "Pass";
+
+    const hypothesisCount = output.competingHypotheses.length;
+
+    const indicatorCount = output.portfolioImpactTable.reduce((sum, row) => {
+      const indicators = row.monitoringIndicators || (row as any).monitoring_indicators;
+      return sum + (indicators?.length || 0);
+    }, 0);
+
+    return {
+      charCount,
+      sectionCount,
+      cjkRatio,
+      advisoryCheck,
+      hypothesisCount,
+      indicatorCount,
+    };
+  }, [deferredFinalResult]);
 
   return (
     <main className="shell">
@@ -1065,10 +1248,17 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             <button
               type="button"
               className="primaryButton"
-              onClick={handleRun}
-              disabled={isRunning || !rawJson.trim()}
+              onClick={abMode ? handleRunAB : handleRun}
+              disabled={isRunning || abRunning || !rawJson.trim() || (abMode && (!abStage || !abPromptOverride.trim()))}
             >
-              {isRunning ? "Running..." : "Run Pipeline"}
+              {isRunning || abRunning ? "Running..." : abMode ? "Run A/B" : "Run Pipeline"}
+            </button>
+            <button
+              type="button"
+              className="secondaryButton"
+              onClick={() => setAbMode((prev) => !prev)}
+            >
+              {`A/B Compare: ${abMode ? "ON" : "OFF"}`}
             </button>
             <span className="statusLine">
               {activeStage
@@ -1076,6 +1266,57 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 : "Idle"}
             </span>
           </div>
+
+          {abMode ? (
+            <div className="configCard" style={{ marginTop: 16 }}>
+              <div className="profileGrid">
+                <label className="fieldShell">
+                  <span className="fieldLabel">B Variant Stage</span>
+                  <select
+                    className="selectInput"
+                    value={abStage ?? ""}
+                    onChange={(event) => setAbStage((event.target.value || null) as InsightStageName | null)}
+                  >
+                    <option value="">Select stage...</option>
+                    {tunedStages.map((stage) => (
+                      <option key={`ab-${stage}`} value={stage}>
+                        {STAGE_LABELS[stage]}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {abStage ? (
+                  <div className="profileSummary">
+                    <span className="summaryPill">A = current config</span>
+                    <span className="summaryPill summaryPillAccent">B = prompt override only</span>
+                    <span className="summaryPill">{STAGE_LABELS[abStage]}</span>
+                  </div>
+                ) : null}
+              </div>
+
+              {abStage ? (
+                <label className="fieldShell promptFieldShell">
+                  <div className="promptLabelRow">
+                    <span className="fieldLabel">B Prompt Override</span>
+                    <button
+                      type="button"
+                      className="miniButton"
+                      onClick={() => setAbPromptOverride(stageConfigs[abStage].prompt || DEFAULT_STAGE_PROMPTS[abStage])}
+                    >
+                      Reset to Current
+                    </button>
+                  </div>
+                  <textarea
+                    className="promptInput"
+                    value={abPromptOverride}
+                    spellCheck={false}
+                    rows={10}
+                    onChange={(event) => setAbPromptOverride(event.target.value)}
+                  />
+                </label>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
         <div className="pipelineDiagram">
@@ -1288,7 +1529,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                           <label className="fieldShell">
                             <span className="fieldLabel">Max Tokens</span>
                             <input type="number" min="256" max="16000" step="100" className="textInput" value={config.maxTokens}
-                              onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, maxTokens: Number(event.target.value) }))} />
+                                onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, maxTokens: Number(event.target.value) }))} />
                           </label>
                         </div>
 
@@ -1299,7 +1540,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                               onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, customModel: event.target.value }))} />
                           </label>
                         ) : null}
-
                         <label className="fieldShell promptFieldShell">
                           <div className="promptLabelRow">
                             <span className="fieldLabel">Stage Prompt</span>
@@ -1695,81 +1935,67 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               <span className="statusBadge status-success">
                 {deferredFinalResult?.finalOutput ? "Ready" : "Pending"}
               </span>
+            {qualityMetrics ? (
+              <div className="metaRow" style={{ marginTop: 10, marginBottom: 10 }}>
+                <span className="summaryPill">{qualityMetrics.charCount.toLocaleString()}자</span>
+                <span className="summaryPill">섹션 {qualityMetrics.sectionCount}개</span>
+                <span
+                  className="summaryPill"
+                  style={qualityMetrics.cjkRatio > 0 ? { backgroundColor: "#fee2e2", color: "#ef4444" } : {}}
+                >
+                  CJK {qualityMetrics.cjkRatio.toFixed(1)}% {qualityMetrics.cjkRatio === 0 ? "✓" : ""}
+                </span>
+                <span
+                  className="summaryPill"
+                  style={qualityMetrics.advisoryCheck === "Fail" ? { backgroundColor: "#fee2e2", color: "#ef4444" } : {}}
+                >
+                  투자조언 {qualityMetrics.advisoryCheck === "Pass" ? "없음✓" : "있음"}
+                </span>
+                <span className="summaryPill">가설 {qualityMetrics.hypothesisCount}개</span>
+                <span className="summaryPill">지표 {qualityMetrics.indicatorCount}개</span>
+              </div>
+            ) : null}
             </div>
 
             {deferredFinalResult?.finalOutput ? (
               <div className="resultGrid">
                 {previousResult && finalOutputComparison ? (
-                  <details className="summaryBlock" open>
-                    <summary className="summaryLabel">
-                      {`📊 이전 분석과 비교 (${formatStoredDate(previousResult.timestamp)})`}
-                    </summary>
-                    <div className="triggerList">
-                      {finalOutputComparison.structuralReadChanged ? (
-                        <div className="listCard">
+                <details className="summaryBlock" open>
+                  <summary className="summaryLabel">
+                    <span>분석 이력 ({analysisHistory.length})</span>
+                  </summary>
+                  <input
+                    type="text"
+                    className="textInput"
+                    placeholder="키워드로 검색... (이벤트 제목, 종목명)"
+                    value={historySearch}
+                    onChange={(e) => setHistorySearch(e.target.value)}
+                    style={{ marginBottom: 10 }}
+                  />
+                  <div className="triggerList">
+                    {analysisHistory
+                      .filter((analysis) => {
+                        const searchTerm = historySearch.toLowerCase();
+                        return (
+                          analysis.eventId.toLowerCase().includes(searchTerm) ||
+                          analysis.output.oneLineTake.toLowerCase().includes(searchTerm) ||
+                          analysis.output.markdownOutput.toLowerCase().includes(searchTerm)
+                        );
+                      })
+                      .map((analysis) => (
+                        <div key={analysis.eventId} className="listCard">
                           <div className="metaRow">
-                            <strong>structural_read</strong>
-                            <span className="statusBadge status-running">Changed</span>
+                            <strong>{analysis.eventId}</strong>
+                            <span className="summaryPill">{formatStoredDate(analysis.timestamp)}</span>
+                            <button type="button" className="miniButton" onClick={() => loadAnalysis(analysis)}>
+                              Load
+                            </button>
                           </div>
-                          <div>old: {previousResult.output.structuralRead}</div>
-                          <div>new: {deferredFinalResult.finalOutput.structuralRead}</div>
-                        </div>
-                      ) : null}
-
-                      {finalOutputComparison.oneLineTakeChanged ? (
-                        <div className="listCard">
-                          <div className="metaRow">
-                            <strong>one_line_take</strong>
-                            <span className="statusBadge status-running">Changed</span>
-                          </div>
-                          <div>old: {previousResult.output.oneLineTake}</div>
-                          <div>new: {deferredFinalResult.finalOutput.oneLineTake}</div>
-                        </div>
-                      ) : null}
-
-                      {finalOutputComparison.weightChanges.map((change) => (
-                        <div key={change.label} className="listCard">
-                          <div className="metaRow">
-                            <strong>{change.label}</strong>
-                            <span className="statusBadge status-running">Weight Changed</span>
-                          </div>
-                          <div>{`${change.previousWeight} -> ${change.currentWeight}`}</div>
+                          <div>{analysis.output.oneLineTake}</div>
                         </div>
                       ))}
-
-                      {finalOutputComparison.addedTriggers.map((trigger) => (
-                        <div key={`added-${getWatchTriggerKey(trigger)}`} className="listCard">
-                          <div className="metaRow">
-                            <strong>watch_trigger</strong>
-                            <span className="statusBadge status-success">Added</span>
-                          </div>
-                          <div>{getWatchTriggerLabel(trigger)}</div>
-                          <div>trigger: {trigger.thesisTrigger}</div>
-                        </div>
-                      ))}
-
-                      {finalOutputComparison.removedTriggers.map((trigger) => (
-                        <div key={`removed-${getWatchTriggerKey(trigger)}`} className="listCard">
-                          <div className="metaRow">
-                            <strong>watch_trigger</strong>
-                            <span className="statusBadge status-error">Removed</span>
-                          </div>
-                          <div>{getWatchTriggerLabel(trigger)}</div>
-                          <div>trigger: {trigger.thesisTrigger}</div>
-                        </div>
-                      ))}
-
-                      {!finalOutputComparison.hasChanges ? (
-                        <div className="listCard">
-                          <div className="metaRow">
-                            <strong>변경 사항</strong>
-                            <span className="statusBadge status-success">No Changes</span>
-                          </div>
-                          <div>이전 분석과 주요 출력이 동일합니다.</div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </details>
+                  </div>
+                </details>
                 ) : null}
 
                 <div className="summaryBlock">
@@ -1827,8 +2053,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                             ) : null;
                           })()}
                         </details>
-                      );
-                    })}
+                    ))}
                   </div>
                 </div>
 
@@ -2002,27 +2227,29 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
                 <div className="summaryBlock markdownBlock">
                   <span className="summaryLabel">Markdown Output</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                    <label>
+                      <span className="fieldLabel" style={{ marginRight: 4 }}>템플릿:</span>
+                      <select
+                        className="selectInput"
+                        value={outputTemplate}
+                        onChange={(e) => setOutputTemplate(e.target.value as "full" | "summary" | "social")}
+                        style={{ width: "auto" }}
+                      >
+                        <option value="full">Full Report</option>
+                        <option value="summary">Executive Summary</option>
+                        <option value="social">Social Post</option>
+                      </select>
+                    </label>
+                    <span className="hintText">현재 템플릿: {outputTemplate === "full" ? "Full Report" : outputTemplate === "summary" ? "Executive Summary" : "Social Post"}</span>
+                  </div>
                   <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
                     <button
                       type="button"
                       className="miniButton"
-                      onClick={() => handleCopy("full")}
+                      onClick={handleCopy}
                     >
-                      📋 전체 복사
-                    </button>
-                    <button
-                      type="button"
-                      className="miniButton"
-                      onClick={() => handleCopy("summary")}
-                    >
-                      📋 요약 복사
-                    </button>
-                    <button
-                      type="button"
-                      className="miniButton"
-                      onClick={() => handleCopy("one-liner")}
-                    >
-                      📋 한 줄 복사
+                      📋 현재 템플릿 복사
                     </button>
                     {copyFeedback && <span style={{ marginLeft: 8, color: "var(--text-color-light)" }}>{copyFeedback}</span>}
                   </div>
@@ -2045,6 +2272,49 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                     />
                   </div>
                 </div>
+
+                {abComparison && abStage ? (
+                  <div className="summaryBlock markdownBlock">
+                    <span className="summaryLabel">A/B Comparison</span>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                      <div>
+                        <span className="summaryLabel">A (Current)</span>
+                        {renderComparedMarkdown(abComparison.markdownA, abComparison.markdownB, "a")}
+                      </div>
+                      <div>
+                        <span className="summaryLabel">B (Modified: {STAGE_LABELS[abStage]})</span>
+                        {renderComparedMarkdown(abComparison.markdownB, abComparison.markdownA, "b")}
+                      </div>
+                    </div>
+                    <div className="triggerList" style={{ marginTop: 16 }}>
+                      <div className="listCard">
+                        <div className="metaRow">
+                          <strong>Character Count</strong>
+                        </div>
+                        <div>{`A: ${abComparison.charCountA.toLocaleString()} / B: ${abComparison.charCountB.toLocaleString()}`}</div>
+                      </div>
+                      <div className="listCard">
+                        <div className="metaRow">
+                          <strong>Sections only in A</strong>
+                        </div>
+                        <div>{abComparison.onlyInA.length > 0 ? abComparison.onlyInA.join(", ") : "None"}</div>
+                      </div>
+                      <div className="listCard">
+                        <div className="metaRow">
+                          <strong>Sections only in B</strong>
+                        </div>
+                        <div>{abComparison.onlyInB.length > 0 ? abComparison.onlyInB.join(", ") : "None"}</div>
+                      </div>
+                      <div className="listCard">
+                        <div className="metaRow">
+                          <strong>oneLineTake</strong>
+                        </div>
+                        <div>{`A: ${abComparison.oneLineTakeA}`}</div>
+                        <div>{`B: ${abComparison.oneLineTakeB}`}</div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="panelLead">
