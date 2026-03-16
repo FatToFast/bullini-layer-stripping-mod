@@ -45,8 +45,25 @@ export const STEP1_PROMPT = `역할:
   "hidden_assumptions": ["가정1", "가정2"],
   "why_incomplete": "왜 이 해석이 불완전한가",
   "what_market_misses": "시장이 놓치고 있는 핵심 포인트",
-  "confidence": "confirmed | estimated | scenario"
-}`;
+  "confidence": "confirmed | estimated | scenario",
+  "competing_hypotheses": [
+    {
+      "label": "가설 이름 (예: H1: 단기 충격 후 적응)",
+      "logic": "이 가설의 핵심 논리 1~2줄",
+      "evidence_for": ["찬성 근거1", "찬성 근거2"],
+      "evidence_against": ["반대 근거1"],
+      "current_weight": "strongest | plausible | weak"
+    }
+  ]
+}
+
+competing_hypotheses 규칙:
+- 반드시 2~4개 가설을 나열하라. 가설이 1개뿐이면 경쟁 분석이 아니므로 최소 2개 필요.
+- consensus_view는 가설 중 하나로 포함되어야 한다 (보통 strongest).
+- evidence_for는 최소 1개 필수. evidence_against는 있을 때만 포함 — 반대 근거가 없으면 빈 배열 [].
+- current_weight는 현재 증거 기준 상대적 무게: strongest(증거 가장 많음), plausible(합리적이나 증거 부족), weak(가능하나 근거 빈약).
+- 증거 차이가 있으면 weight에 반영하라. strongest 가설을 명확히 표시하되, 다른 가설도 논리와 근거를 충실히 서술하라.
+- "이론적으로 가능하다" 수준의 가설은 weak. evidence_for에 구체적 근거 없으면 포함하지 마라.`;
 
 
 // ============================================================
@@ -157,42 +174,66 @@ export const STEP4_PROMPT = `역할:
 
 
 // ============================================================
-// STEP 5: Portfolio Impact — 종목별 영향 매핑 (Product-first 핵심)
+// STEP 5: Impact Mapping — 영향 매핑 (Portfolio / General 이원화)
 // ============================================================
 export const STEP5_PROMPT = `역할:
-너는 Portfolio Impact 매핑 단계다. 이것이 이 파이프라인에서 가장 중요한 단계다.
+너는 Impact Mapping 단계다. 이것이 이 파이프라인에서 가장 중요한 단계다.
 
-목표:
-사용자의 포트폴리오/워치리스트에 있는 모든 종목에 대해
-이 이벤트의 영향을 분류하라.
+모드 판정:
+- 입력의 portfolio 배열에 held="held" 항목이 1개 이상 → Personalized Mode
+- portfolio가 빈 배열이거나 held="held" 항목이 0개 → General Mode
 
-분류 유형 (4종, 모든 종목이 반드시 하나에 해당):
+== Personalized Mode ==
+
+목표: 사용자의 보유/관심 종목에 대해 이벤트 영향을 분류하라.
+
+규칙:
+- 포트폴리오의 모든 종목을 빠짐없이 분류하라. no_material_impact도 명시하라.
+- beneficiary를 남발하지 마라. 근거 2개 미만이면 scenario로 강등.
+- held="held" 종목을 목록 상단에 배치하라.
+
+== General Mode ==
+
+목표: 이벤트에서 영향받는 주요 기업/섹터를 자동 추출하여 매핑하라.
+
+규칙:
+- Step 1~4의 분석 결과와 entities에서 영향받는 기업을 5~10개 추출하라.
+- direct 영향이 가장 큰 순서로 정렬하라.
+- 모든 항목의 held는 "watchlist"로 표기하라.
+- no_material_impact 항목은 포함하지 마라 (관심 없는 기업을 넣을 필요 없음).
+
+== 공통 규칙 (양 모드) ==
+
+분류 유형 (4종):
 - direct: 매출/원가/생산에 직접 영향
 - indirect: 전이 경로를 통해 간접 영향
 - beneficiary: 반사이익 가능 (엄격 판정: 물량 전환 경로/선례/기업 코멘트 중 2개 이상)
 - no_material_impact: 현재 확인 가능한 영향 경로 없음
 
-핵심 규칙:
-- 포트폴리오의 모든 종목을 빠짐없이 분류하라. no_material_impact도 명시하라.
-- beneficiary를 남발하지 마라. 근거 2개 미만이면 scenario로 강등.
-- 각 종목에 "오늘 바뀌는 것"과 "행동"을 1줄씩 써라.
+- 각 종목에 "오늘 바뀌는 것"과 "다음에 확인할 데이터"를 1줄씩 써라.
 - confidence를 반드시 표기하라.
+- what_to_monitor는 행동 제안이 아니다. "다음에 확인할 데이터 포인트"를 쓰라.
+  예시 O: "4/15 USTR 의견접수 마감 결과 확인"
+  예시 O: "다음 분기 HBM 출하량 발표 (5월 예정)"
+  예시 X: "비중 축소 고려" ← 투자 행동 제안 금지
+  예시 X: "리스크 관리 필요" ← 회피 표현 금지
 
 입력:
-- 사용자 포트폴리오 목록
+- 사용자 포트폴리오 목록 (빈 배열일 수 있음)
 - Step 1 (consensus + 불완전성)
 - Step 3 (반대 경로)
 - Step 4 (인접 전이)
 
 출력 스키마:
 {
+  "mode": "personalized | general",
   "portfolio_impact": [
     {
       "company": "종목명",
       "held": "held | watchlist",
       "exposure_type": "direct | indirect | beneficiary | no_material_impact",
       "what_changes_today": "오늘 이 종목에 바뀌는 것 1줄",
-      "action": "사용자 행동 제안 1줄",
+      "what_to_monitor": "다음에 확인할 데이터 포인트 1줄",
       "line_items": ["revenue", "cost", "margin", "utilization", "capex"],
       "direction": "up | down | neutral | uncertain",
       "confidence": "confirmed | estimated | scenario",
@@ -323,8 +364,26 @@ export const STEP8_PROMPT = `역할:
       "used_in_layers": ["layer1", "layer2"]
     }
   ],
-  "evidence_gaps": ["아직 확인 못 한 중요 정보 목록"]
-}`;
+  "evidence_gaps": ["아직 확인 못 한 중요 정보 목록"],
+  "historical_precedents": [
+    {
+      "pattern": "비교 가능한 과거 사례 패턴 (예: 301조 관세 발동 후 한국 수출 변화)",
+      "frequency": "빈도 (예: 3건 중 2건, 67%)",
+      "source": "출처 (예: KITA 무역통계 2018-2025)",
+      "relevance": "이번 사례에 얼마나 적용 가능한가 1줄",
+      "confidence": "confirmed | estimated | scenario",
+      "caveat": "이 빈도를 그대로 적용하면 안 되는 이유 (있을 경우)"
+    }
+  ]
+}
+
+historical_precedents 규칙:
+- 검색 결과나 입력 데이터에서 유사 사례를 찾아라. 없으면 빈 배열 [].
+- 절대 빈도를 지어내지 마라. 출처 없는 숫자는 금지.
+- 입력에 historical data가 없으면 "historical_precedents": [] 로 반환하라. 억지로 채우지 마라.
+- 검색 결과에서 과거 사례 통계가 나왔을 때만 포함하라.
+- caveat는 표본 크기, 시기 차이, 구조적 차이 등 해당 빈도의 한계를 명시하라.
+- 이것은 AI의 의견이 아니라 과거 데이터의 빈도다. "~할 수 있다" 식 추측은 금지.`;
 
 
 // ============================================================
@@ -333,38 +392,83 @@ export const STEP8_PROMPT = `역할:
 export const STEP9_PROMPT = `역할:
 너는 최종 Output Formatting 단계다.
 
+모드 판정:
+- Step 5 결과의 mode가 "personalized" → Personalized Mode
+- Step 5 결과의 mode가 "general" → General Mode
+- mode 필드가 없으면: portfolio에 held="held" 항목이 있으면 Personalized, 없으면 General
+
 입력:
-- Step 5 결과 (portfolio_impact)
+- Step 5 결과 (portfolio_impact + mode)
 - Step 6 결과 (time_horizon)
 - Step 7 결과 (structural_read + premortem)
-- Step 8 결과 (verified facts)
-- Step 1 결과 (consensus + why_incomplete)
+- Step 8 결과 (verified facts + historical_precedents)
+- Step 1 결과 (consensus + why_incomplete + competing_hypotheses)
 - Step 3 결과 (reverse_paths)
 - Step 4 결과 (spillover_paths)
+- portfolio 원본 (held 항목 판별용)
 
-목표:
-Product-first 구조로 최종 결과를 정리하라.
-포트폴리오 영향이 최상단, 해설은 근거로 후행.
+== Personalized Mode ==
 
-출력 구조:
-1. one_line_take: 이 이벤트의 핵심 1줄
-2. portfolio_impact_table: 종목별 영향 테이블 (Step 5 기반)
-3. watch_triggers: 확인 일정 + if_confirmed/if_not 분기 (최대 5개)
-4. why_sections: 근거 해설 (번호 매기기, confidence 표기)
-5. structural_read: 구조 판정 1줄
-6. premortem: 기본형 (4줄)
-7. markdown_output: 위 전체를 마크다운으로 렌더링
+목표: 사용자의 보유 종목 기준으로 결과를 정리하라. 포지션이 주어(subject).
+- portfolio_impact_table을 held="held" 우선, 그 다음 watchlist 순서로 정렬
+- markdown_output에서 각 보유 종목을 독립 섹션으로 구성
+- 종목별로: 오늘 바뀐 것 → 핵심 불확실성 → 다음 확인할 데이터 → 놓칠 수 있는 것
 
-규칙:
+Personalized Mode markdown 구조:
+  ## [이벤트 핵심 1줄]
+  
+  ### [종목명] (보유 중) — exposure_type
+  오늘 바뀐 것: ...
+  핵심 불확실성: ...
+  ├─ 확인되면 → ...
+  └─ 아니면 → ...
+  다음 확인: ...
+  놓칠 수 있는 것: ...
+
+  (watchlist 종목은 간략하게)
+  
+  ### 경쟁 해석
+  ### 과거 사례 (있을 경우)
+  ### Premortem
+
+== General Mode ==
+
+목표: 이벤트 자체를 중심으로 결과를 정리하라. 포트폴리오가 없는 독자를 위한 구조.
+- portfolio_impact_table은 "이 이벤트에 영향받는 기업" 리스트로 표시
+- 기업을 exposure_type별로 그룹핑: direct → indirect → beneficiary
+- markdown_output 마지막에 CTA 1줄 추가: "📌 보유 종목을 추가하면 맞춤 분석을 받을 수 있습니다."
+
+General Mode markdown 구조:
+  ## [이벤트 핵심 1줄]
+  
+  ### 영향받는 기업
+  | 기업 | 유형 | 오늘 바뀌는 것 | 다음 확인 | 신뢰도 |
+  |...|...|...|...|...|
+  
+  ### 핵심 불확실성
+  (watch_triggers 기반, if/then 구조)
+  
+  ### 경쟁 해석
+  ### 과거 사례 (있을 경우)
+  ### 구조 판정 + Premortem
+  
+  ---
+  📌 보유 종목을 추가하면 맞춤 분석을 받을 수 있습니다.
+
+== 공통 규칙 ==
+
 - 투자 추천/매수/매도 의견 금지
 - 과장된 표현 금지
 - 팩트와 해석이 섞이지 않게 할 것
-- no_material_impact 종목도 반드시 포함
 - Watch Triggers는 최대 5개. 초과 금지.
 - "~에 주목할 필요가 있다" 같은 회피 표현 금지
+- what_to_monitor는 투자 행동이 아닌 "다음 확인할 데이터"
+- historical_precedents가 빈 배열이면 markdown_output에서 해당 섹션을 생략하라 (JSON에는 빈 배열 유지)
+- competing_hypotheses에서 strongest 가설을 명확히 표시하되, 다른 가설도 논리와 근거를 충실히 서술하라
 
 출력 스키마:
 {
+  "mode": "personalized | general",
   "one_line_take": "",
   "portfolio_impact_table": [
     {
@@ -372,7 +476,7 @@ Product-first 구조로 최종 결과를 정리하라.
       "held": "held | watchlist",
       "exposure_type": "direct | indirect | beneficiary | no_material_impact",
       "what_changes_today": "",
-      "action": "",
+      "what_to_monitor": "",
       "confidence": "confirmed | estimated | scenario"
     }
   ],
@@ -385,11 +489,30 @@ Product-first 구조로 최종 결과를 정리하라.
       "thesis_trigger": ""
     }
   ],
+  "competing_hypotheses": [
+    {
+      "label": "",
+      "logic": "",
+      "evidence_for": [""],
+      "evidence_against": [""],
+      "current_weight": "strongest | plausible | weak"
+    }
+  ],
   "why_sections": [
     {
       "label": "",
       "content": "",
       "confidence": "confirmed | estimated | scenario"
+    }
+  ],
+  "historical_precedents": [
+    {
+      "pattern": "",
+      "frequency": "",
+      "source": "",
+      "relevance": "",
+      "confidence": "confirmed | estimated | scenario",
+      "caveat": ""
     }
   ],
   "structural_read": "",
