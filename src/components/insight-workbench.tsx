@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState, startTransition } from "react";
+import { useDeferredValue, useMemo, useState, startTransition, useEffect } from "react";
 import {
   runInsightApiStream,
   fetchArticleText,
@@ -267,6 +267,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
   const [stageEvaluations, setStageEvaluations] = useState<Partial<Record<InsightStageName, StageEvaluationResult>>>({});
   const [evaluatingStage, setEvaluatingStage] = useState<InsightStageName | null>(null);
+  const [analysisHistory, setAnalysisHistory] = useState<StoredAnalysis[]>([]);
   const [searchR1Config, setSearchR1Config] = useState<SearchRoundConfig>({
     prompt: SEARCH_R1_DEFAULT_PROMPT,
     model: "",
@@ -288,6 +289,29 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       setEditableMarkdown(deferredFinalResult.finalOutput.markdownOutput);
     }
   }, [deferredFinalResult]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const history: StoredAnalysis[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const key = window.localStorage.key(i);
+        if (key?.startsWith(ANALYSIS_STORAGE_PREFIX)) {
+          const stored = readStoredAnalysis(key.replace(ANALYSIS_STORAGE_PREFIX, ""));
+          if (stored) {
+            history.push({ ...stored, eventId: key.replace(ANALYSIS_STORAGE_PREFIX, "") });
+          }
+        }
+      }
+      setAnalysisHistory(history.sort((a, b) => b.timestamp - a.timestamp));
+    }
+  }, []);
+
+  function loadAnalysis(analysis: StoredAnalysis) {
+    setFinalResult({ runId: `history-${analysis.eventId}`, stages: [], finalOutput: analysis.output });
+    setRawJson("");
+    setEditableMarkdown(analysis.output.markdownOutput);
+    setUserNotes("");
+  }
 
   const effectiveCommonModel = getEffectiveModel(commonModel, commonCustomModel);
   const orderedStageRecords = useMemo(
@@ -718,6 +742,30 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       setStageEvaluations((prev) => ({ ...prev, [stage]: result }));
     }
     setEvaluatingStage(null);
+  }
+
+  function handleCopy(format: "full" | "summary" | "one-liner") {
+    let textToCopy = "";
+    if (format === "full") {
+      textToCopy = editableMarkdown;
+    } else if (format === "summary") {
+      const output = deferredFinalResult?.finalOutput;
+      if (output) {
+        const portfolioImpactSummary = output.portfolioImpactTable
+          .map((row) => `${row.company} (${row.exposureType}): ${row.whatChangesToday}`)
+          .join("\n");
+        textToCopy = `${output.oneLineTake}\n\n${output.structuralRead}\n\n${portfolioImpactSummary}`;
+      }
+    } else if (format === "one-liner") {
+      textToCopy = deferredFinalResult?.finalOutput?.oneLineTake || "";
+    }
+
+    if (textToCopy) {
+      navigator.clipboard.writeText(textToCopy).then(() => {
+        setCopyFeedback("복사됨!");
+        setTimeout(() => setCopyFeedback(null), 2000);
+      });
+    }
   }
 
   return (
@@ -1747,7 +1795,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                     {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => {
                       const heldCompanies = getPortfolioHeldCompanies(rawJson);
                       const isHeld = heldCompanies.has(row.company);
-                      const isGeneral = deferredFinalResult.finalOutput.mode === "general";
+                      const isGeneral = deferredFinalResult.finalOutput?.mode === "general";
                       return (
                         <details key={`${row.company}-${row.held}`} className="listCard">
                           <summary>
@@ -1807,7 +1855,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 <details className="summaryBlock">
                   <summary className="summaryLabel">
                     <span>Watch Triggers ({deferredFinalResult.finalOutput.watchTriggers.length})</span>
-                    {deferredFinalResult.finalOutput.watchTriggers.length > 0 ? (
+                    {deferredFinalResult.finalOutput && deferredFinalResult.finalOutput.watchTriggers.length > 0 ? (
                       <span className="summaryPill">Next: {deferredFinalResult.finalOutput.watchTriggers[0].date}</span>
                     ) : null}
                   </summary>
@@ -1999,7 +2047,48 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
                 <div className="summaryBlock markdownBlock">
                   <span className="summaryLabel">Markdown Output</span>
-                  <pre className="codeBlock">{deferredFinalResult.finalOutput.markdownOutput}</pre>
+                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+                    <button
+                      type="button"
+                      className="miniButton"
+                      onClick={() => handleCopy("full")}
+                    >
+                      📋 전체 복사
+                    </button>
+                    <button
+                      type="button"
+                      className="miniButton"
+                      onClick={() => handleCopy("summary")}
+                    >
+                      📋 요약 복사
+                    </button>
+                    <button
+                      type="button"
+                      className="miniButton"
+                      onClick={() => handleCopy("one-liner")}
+                    >
+                      📋 한 줄 복사
+                    </button>
+                    {copyFeedback && <span style={{ marginLeft: 8, color: "var(--text-color-light)" }}>{copyFeedback}</span>}
+                  </div>
+                  <textarea
+                    className="codeBlock"
+                    value={editableMarkdown}
+                    onChange={(e) => setEditableMarkdown(e.target.value)}
+                    rows={20}
+                    style={{ width: "100%", fontFamily: "monospace" }}
+                  />
+                  <div style={{ marginTop: 16 }}>
+                    <span className="summaryLabel">내 메모</span>
+                    <textarea
+                      placeholder="이 분석에 대한 메모를 남겨보세요..."
+                      className="codeBlock"
+                      value={userNotes}
+                      onChange={(e) => setUserNotes(e.target.value)}
+                      rows={4}
+                      style={{ width: "100%", fontFamily: "monospace" }}
+                    />
+                  </div>
                 </div>
               </div>
             ) : (
@@ -2026,6 +2115,44 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             ) : null}
           </section>
         </div>
+
+        <section className="resultCard">
+          <details className="resultHeader resultHeaderToggle" open={false}>
+            <summary
+              className="resultHeader resultHeaderToggle"
+              style={{ cursor: "pointer" }}
+            >
+              <h2 className="resultTitle">분석 이력</h2>
+              <span className="statusBadge status-running">
+                {analysisHistory.length} saved
+              </span>
+            </summary>
+            <div className="stack" style={{ paddingTop: 16 }}>
+              {analysisHistory.length === 0 ? (
+                <p className="panelLead">저장된 분석이 없습니다.</p>
+              ) : (
+                analysisHistory.map((analysis) => (
+                  <div key={analysis.eventId} className="listCard">
+                    <div className="metaRow">
+                      <strong>{formatStoredDate(analysis.timestamp)}</strong>
+                      <span>{analysis.eventId}</span>
+                      <span className={`statusBadge ${analysis.output.mode === "personalized" ? "status-running" : "status-success"}`}>
+                        {analysis.output.mode === "personalized" ? "Personalized" : "General"}
+                      </span>
+                      <button
+                        type="button"
+                        className="miniButton"
+                        onClick={() => loadAnalysis(analysis)}
+                      >
+                        불러오기
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </details>
+        </section>
       </section>
     </main>
   );
