@@ -1,64 +1,44 @@
 "use client";
 
-import { useDeferredValue, useMemo, useState, startTransition, useEffect } from "react";
+import { startTransition, useEffect, useMemo } from "react";
+
 import {
   runInsightApiStream,
   fetchArticleText,
   structureWithLlm,
   evaluateStage,
   type ExtractModelSettings,
-  type FetchTextResult,
 } from "@/lib/insight/api";
-import {
-  CUSTOM_MODEL_VALUE,
-  MODEL_GROUPS,
-  TUNABLE_STAGES,
-} from "@/lib/insight/model-catalog";
-import { STAGE_LABELS, STAGE_DESCRIPTIONS, STAGE_ORDER } from "@/lib/insight/stage-labels";
+import { CUSTOM_MODEL_VALUE, MODEL_GROUPS, TUNABLE_STAGES } from "@/lib/insight/model-catalog";
 import { DEFAULT_STAGE_PROMPTS } from "@/lib/insight/prompts";
-import {
-  SEARCH_R1_DEFAULT_PROMPT,
-  SEARCH_R2_DEFAULT_PROMPT,
-} from "@/lib/insight/search-query-prompts";
+import { STAGE_LABELS } from "@/lib/insight/stage-labels";
 import type {
   CachedStageResults,
-  FinalOutput,
-  InsightRunResult,
   InsightStageName,
   PipelineModelSettings,
-  SearchRoundConfig,
-  StageRecord,
   StageStatus,
-  StageEvaluationResult,
 } from "@/lib/insight/types";
-
-/** Tab can be an analysis stage or a search round config */
-type TabId = InsightStageName | "searchR1" | "searchR2";
-
-type ExtractPhase = "idle" | "fetching" | "previewing" | "structuring" | "done" | "error";
-
-type SampleItem = {
-  key: string;
-  label: string;
-  rawJson: string;
-};
-
-type SearchRoundState = {
-  round: 1 | 2;
-  queries: string[];
-  results: unknown[];
-  error?: string;
-};
-
-type StageUiConfig = {
-  enabled: boolean;
-  expanded: boolean;
-  model: string;
-  customModel: string;
-  temperature: number;
-  maxTokens: number;
-  prompt: string;
-};
+import { ABComparison } from "@/components/insight/ab-comparison";
+import { AnalysisHistory } from "@/components/insight/analysis-history";
+import { FinalOutputPanel } from "@/components/insight/final-output-panel";
+import { OutputEditor } from "@/components/insight/output-editor";
+import { PipelineDiagram } from "@/components/insight/pipeline-diagram";
+import { QualityDashboard } from "@/components/insight/quality-dashboard";
+import { SearchRoundsLog } from "@/components/insight/search-rounds-log";
+import { StageWorkbench } from "@/components/insight/stage-workbench";
+import {
+  OUTPUT_STAGE_TOKENS,
+  buildInitialStageConfigs,
+  type SampleItem,
+  type StageUiConfig,
+  usePipelineState,
+} from "@/hooks/use-pipeline-state";
+import {
+  getEventIdFromRawJson,
+  readStoredAnalysis,
+  useAnalysisStorage,
+} from "@/hooks/use-analysis-storage";
+import { useQualityMetrics } from "@/hooks/use-quality-metrics";
 
 type SearchProviderOption = {
   kind: string;
@@ -74,19 +54,7 @@ type Props = {
   samples: SampleItem[];
 };
 
-const statusLabel: Record<StageStatus, string> = {
-  idle: "Idle",
-  running: "Running",
-  success: "Success",
-  error: "Error",
-  insufficient_evidence: "Insufficient",
-};
-
 const TOKEN_PRESETS = [1200, 1800, 2500, 4000];
-const DEFAULT_TEMPERATURE = 0.2;
-const DEFAULT_MAX_TOKENS = 1800;
-const OUTPUT_STAGE_TOKENS = 4000;
-const ANALYSIS_STORAGE_PREFIX = "bullini-analysis-";
 const PRESETS = {
   deep: { temperature: 0.3, maxTokens: 8192, label: "Deep" },
   balanced: { temperature: 0.5, maxTokens: 4096, label: "Balanced" },
@@ -95,16 +63,6 @@ const PRESETS = {
 const MODEL_NOTE_LOOKUP = new Map(
   MODEL_GROUPS.flatMap((group) => group.options.map((option) => [option.value, option.note] as const))
 );
-
-type StoredAnalysis = {
-  timestamp: number;
-  eventId: string;
-  output: FinalOutput;
-};
-
-function prettyJson(value: unknown) {
-  return JSON.stringify(value, null, 2);
-}
 
 function isKnownModel(model: string) {
   return MODEL_NOTE_LOOKUP.has(model);
@@ -118,253 +76,115 @@ function getEffectiveModel(model: string, customModel: string) {
   return model === CUSTOM_MODEL_VALUE ? customModel.trim() : model;
 }
 
-function stringifyValue(value: unknown) {
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function getEventIdFromRawJson(input: string) {
-  try {
-    const parsed = JSON.parse(input) as { canonical_event?: { event_id?: unknown } };
-    const eventId = parsed.canonical_event?.event_id;
-    return typeof eventId === "string" && eventId.trim() ? eventId.trim() : null;
-  } catch {
-    return null;
-  }
-}
-
-function addCompanyToPortfolio(rawJson: string, company: string): string {
-  try {
-    const parsed = JSON.parse(rawJson);
-    if (!Array.isArray(parsed.portfolio)) {
-      parsed.portfolio = [];
-    }
-    const exists = parsed.portfolio.some(
-      (item: { company?: string }) => item.company === company
-    );
-    if (exists) {
-      parsed.portfolio = parsed.portfolio.map(
-        (item: { company?: string; held?: string }) =>
-          item.company === company ? { ...item, held: "held" } : item
-      );
-    } else {
-      parsed.portfolio.push({ company, held: "held" });
-    }
-    return JSON.stringify(parsed, null, 2);
-  } catch {
-    return rawJson;
-  }
-}
-
-function getPortfolioHeldCompanies(rawJson: string): Set<string> {
-  try {
-    const parsed = JSON.parse(rawJson);
-    if (!Array.isArray(parsed.portfolio)) return new Set();
-    return new Set(
-      parsed.portfolio
-        .filter((item: { held?: string }) => item.held === "held")
-        .map((item: { company?: string }) => item.company)
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-function readStoredAnalysis(eventId: string) {
-  if (typeof window === "undefined") return null;
-
-  try {
-    const stored = window.localStorage.getItem(`${ANALYSIS_STORAGE_PREFIX}${eventId}`);
-    if (!stored) return null;
-
-    const parsed = JSON.parse(stored) as Partial<StoredAnalysis>;
-    if (typeof parsed.timestamp !== "number" || !parsed.output) {
-      return null;
-    }
-
-    return {
-      timestamp: parsed.timestamp,
-      output: parsed.output as FinalOutput,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function formatStoredDate(timestamp: number) {
-  if (!Number.isFinite(timestamp)) return "unknown";
-  return new Date(timestamp).toISOString().slice(0, 10);
-}
-
-function getMarkdownSections(markdown: string) {
-  return Array.from(markdown.matchAll(/^#{1,6}\s+(.+)$/gm), (match) => match[1].trim());
-}
-
-function getSectionDifference(source: string[], target: string[]) {
-  const targetSet = new Set(target);
-  return source.filter((section) => !targetSet.has(section));
-}
-
-function renderComparedMarkdown(primary: string, secondary: string, variant: "a" | "b") {
-  const primaryLines = primary.replace(/\r\n/g, "\n").split("\n");
-  const secondaryLines = secondary.replace(/\r\n/g, "\n").split("\n");
-
-  return (
-    <pre className="codeBlock" style={{ whiteSpace: "pre-wrap" }}>
-      {primaryLines.map((line, index) => {
-        const changed = line !== (secondaryLines[index] ?? "");
-        return (
-          <span
-            key={`${variant}-${index}`}
-            style={{
-              display: "block",
-              backgroundColor: changed
-                ? variant === "a"
-                  ? "rgba(239, 68, 68, 0.12)"
-                  : "rgba(34, 197, 94, 0.12)"
-                : "transparent",
-            }}
-          >
-            {line || " "}
-          </span>
-        );
-      })}
-    </pre>
-  );
-}
-
-function getWatchTriggerKey(trigger: FinalOutput["watchTriggers"][number]) {
-  return stringifyValue(trigger);
-}
-
-function getWatchTriggerLabel(trigger: FinalOutput["watchTriggers"][number]) {
-  return `${trigger.date} - ${trigger.event}`;
-}
-
-function getMetricStyle(level: "good" | "bad" | "neutral") {
-  if (level === "good") {
-    return { backgroundColor: "#dcfce7", color: "#15803d" };
-  }
-  if (level === "bad") {
-    return { backgroundColor: "#fee2e2", color: "#ef4444" };
-  }
-  return {};
-}
-
-function buildInitialStageConfigs(
-  defaultModel: string,
-  defaultTemperature = DEFAULT_TEMPERATURE,
-  defaultMaxTokens = DEFAULT_MAX_TOKENS
-): Record<InsightStageName, StageUiConfig> {
-  const base = (stage: InsightStageName, overrides?: Partial<StageUiConfig>): StageUiConfig => ({
-    enabled: false,
-    expanded: false,
-    model: defaultModel,
-    customModel: isKnownModel(defaultModel) ? "" : defaultModel,
-    temperature: defaultTemperature,
-    maxTokens: defaultMaxTokens,
-    prompt: DEFAULT_STAGE_PROMPTS[stage],
-    ...overrides,
-  });
-
-  return {
-    input_validation: base("input_validation"),
-    layer0_layer1: base("layer0_layer1"),
-    event_classification: base("event_classification"),
-    layer2_reverse_paths: base("layer2_reverse_paths"),
-    layer3_adjacent_spillover: base("layer3_adjacent_spillover"),
-    portfolio_impact: base("portfolio_impact"),
-    layer4_time_horizon: base("layer4_time_horizon"),
-    layer5_structural_premortem: base("layer5_structural_premortem"),
-    evidence_consolidation: base("evidence_consolidation"),
-    output_formatting: base("output_formatting", { enabled: true, expanded: true, maxTokens: OUTPUT_STAGE_TOKENS }),
-  };
-}
-
 export function InsightWorkbench({ defaultModel, providerLabel, searchProviders, defaultSystemPrompt, samples }: Props) {
   const defaultSample = samples[0];
-  const [rawJson, setRawJson] = useState(defaultSample?.rawJson ?? "");
-  const [commonModel, setCommonModel] = useState(defaultModel);
-  const [commonCustomModel, setCommonCustomModel] = useState(isKnownModel(defaultModel) ? "" : defaultModel);
-  const [commonTemperature, setCommonTemperature] = useState(DEFAULT_TEMPERATURE);
-  const [commonMaxTokens, setCommonMaxTokens] = useState(DEFAULT_MAX_TOKENS);
-  const [preset, setPreset] = useState<"custom" | "deep" | "balanced" | "quick">("custom");
-  const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt);
-  const [systemPromptOpen, setSystemPromptOpen] = useState(false);
-  const [stageConfigs, setStageConfigs] = useState<Record<InsightStageName, StageUiConfig>>(
-    buildInitialStageConfigs(defaultModel, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS)
-  );
-  const [isRunning, setIsRunning] = useState(false);
-  const [stageRecords, setStageRecords] = useState<StageRecord[]>([]);
-  const [searchRounds, setSearchRounds] = useState<SearchRoundState[]>([]);
-  const [finalResult, setFinalResult] = useState<InsightRunResult | null>(null);
-  const [previousResult, setPreviousResult] = useState<{ timestamp: number; output: FinalOutput } | null>(null);
-  const [activeStage, setActiveStage] = useState<InsightStageName | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [newsUrl, setNewsUrl] = useState("");
-  const [analysisPrompt, setAnalysisPrompt] = useState(
-    "이 뉴스가 내 포트폴리오에 미치는 영향을 분석해주세요."
-  );
-  const [searchProvider, setSearchProvider] = useState("noop");
-  const [extractPhase, setExtractPhase] = useState<ExtractPhase>("idle");
-  const [extractError, setExtractError] = useState<string | null>(null);
-  const [fetchedText, setFetchedText] = useState<FetchTextResult | null>(null);
-  const [inputSnapshotOpen, setInputSnapshotOpen] = useState(false);
-  const [runningStage, setRunningStage] = useState<InsightStageName | null>(null);
-  const [activeTab, setActiveTab] = useState<TabId>("layer0_layer1");
-  const [editableMarkdown, setEditableMarkdown] = useState("");
-  const [outputTemplate, setOutputTemplate] = useState<"full" | "summary" | "social">("full");
-  const [userNotes, setUserNotes] = useState("");
-  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
-  const [stageEvaluations, setStageEvaluations] = useState<Partial<Record<InsightStageName, StageEvaluationResult>>>({});
-  const [evaluatingStage, setEvaluatingStage] = useState<InsightStageName | null>(null);
-  const [analysisHistory, setAnalysisHistory] = useState<StoredAnalysis[]>([]);
-  const [historySearch, setHistorySearch] = useState("");
-  const [abMode, setAbMode] = useState(false);
-  const [abStage, setAbStage] = useState<InsightStageName | null>(null);
-  const [abPromptOverride, setAbPromptOverride] = useState("");
-  const [abResult, setAbResult] = useState<InsightRunResult | null>(null);
-  const [abRunning, setAbRunning] = useState(false);
-  const [searchR1Config, setSearchR1Config] = useState<SearchRoundConfig>({
-    prompt: SEARCH_R1_DEFAULT_PROMPT,
-    model: "",
-    temperature: 0.3,
-    maxTokens: 800,
-  });
-  const [searchR2Config, setSearchR2Config] = useState<SearchRoundConfig>({
-    prompt: SEARCH_R2_DEFAULT_PROMPT,
-    model: "",
-    temperature: 0.3,
-    maxTokens: 800,
+  const {
+    rawJson,
+    setRawJson,
+    commonModel,
+    setCommonModel,
+    commonCustomModel,
+    setCommonCustomModel,
+    commonTemperature,
+    setCommonTemperature,
+    commonMaxTokens,
+    setCommonMaxTokens,
+    preset,
+    setPreset,
+    systemPrompt,
+    setSystemPrompt,
+    systemPromptOpen,
+    setSystemPromptOpen,
+    stageConfigs,
+    setStageConfigs,
+    isRunning,
+    setIsRunning,
+    stageRecords,
+    setStageRecords,
+    searchRounds,
+    setSearchRounds,
+    finalResult,
+    setFinalResult,
+    previousResult,
+    setPreviousResult,
+    activeStage,
+    setActiveStage,
+    error,
+    setError,
+    newsUrl,
+    setNewsUrl,
+    analysisPrompt,
+    setAnalysisPrompt,
+    searchProvider,
+    setSearchProvider,
+    extractPhase,
+    setExtractPhase,
+    extractError,
+    setExtractError,
+    fetchedText,
+    setFetchedText,
+    inputSnapshotOpen,
+    setInputSnapshotOpen,
+    runningStage,
+    setRunningStage,
+    activeTab,
+    setActiveTab,
+    editableMarkdown,
+    setEditableMarkdown,
+    outputTemplate,
+    setOutputTemplate,
+    userNotes,
+    setUserNotes,
+    copyFeedback,
+    setCopyFeedback,
+    stageEvaluations,
+    setStageEvaluations,
+    analysisHistory,
+    setAnalysisHistory,
+    historySearch,
+    setHistorySearch,
+    evaluatingStage,
+    setEvaluatingStage,
+    abMode,
+    setAbMode,
+    abStage,
+    setAbStage,
+    abPromptOverride,
+    setAbPromptOverride,
+    abResult,
+    setAbResult,
+    abRunning,
+    setAbRunning,
+    searchR1Config,
+    setSearchR1Config,
+    searchR2Config,
+    setSearchR2Config,
+    deferredRawJson,
+    deferredFinalResult,
+  } = usePipelineState(defaultModel, defaultSystemPrompt, defaultSample);
+
+  const { saveAnalysis, loadAnalysis, finalOutputComparison } = useAnalysisStorage({
+    rawJson,
+    finalResult,
+    previousResult,
+    setAnalysisHistory,
+    setFinalResult,
+    setAbResult,
+    setRawJson,
+    setEditableMarkdown,
+    setUserNotes,
   });
 
-  const deferredRawJson = useDeferredValue(rawJson);
-  const deferredFinalResult = useDeferredValue(finalResult);
+  const effectiveCommonModel = getEffectiveModel(commonModel, commonCustomModel);
+  const tunedStages = useMemo(() => TUNABLE_STAGES.filter((stage) => stage !== "input_validation"), []);
+  const overrideCount = tunedStages.filter((stage) => stageConfigs[stage].enabled).length;
+  const qualityMetrics = useQualityMetrics(deferredFinalResult?.finalOutput ?? null, stageRecords);
 
   useEffect(() => {
     if (deferredFinalResult?.finalOutput?.markdownOutput) {
       setEditableMarkdown(deferredFinalResult.finalOutput.markdownOutput);
     }
-  }, [deferredFinalResult]);
-
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const history: StoredAnalysis[] = [];
-      for (let i = 0; i < window.localStorage.length; i++) {
-        const key = window.localStorage.key(i);
-        if (key?.startsWith(ANALYSIS_STORAGE_PREFIX)) {
-          const stored = readStoredAnalysis(key.replace(ANALYSIS_STORAGE_PREFIX, ""));
-          if (stored) {
-            history.push({ ...stored, eventId: key.replace(ANALYSIS_STORAGE_PREFIX, "") });
-          }
-        }
-      }
-      setAnalysisHistory(history.sort((a, b) => b.timestamp - a.timestamp));
-    }
-  }, []);
+  }, [deferredFinalResult, setEditableMarkdown]);
 
   useEffect(() => {
     if (!abMode) {
@@ -372,102 +192,12 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       setAbPromptOverride("");
       setAbResult(null);
     }
-  }, [abMode]);
+  }, [abMode, setAbPromptOverride, setAbResult, setAbStage]);
 
   useEffect(() => {
     if (!abStage) return;
     setAbPromptOverride(stageConfigs[abStage].prompt || DEFAULT_STAGE_PROMPTS[abStage]);
-  }, [abStage]);
-
-  function loadAnalysis(analysis: StoredAnalysis) {
-    setFinalResult({ runId: `history-${analysis.eventId}`, stages: [], finalOutput: analysis.output });
-    setAbResult(null);
-    setRawJson("");
-    setEditableMarkdown(analysis.output.markdownOutput);
-    setUserNotes("");
-  }
-
-  const effectiveCommonModel = getEffectiveModel(commonModel, commonCustomModel);
-  const orderedStageRecords = useMemo(
-    () =>
-      [...stageRecords].sort(
-        (left, right) => STAGE_ORDER.indexOf(left.stage) - STAGE_ORDER.indexOf(right.stage)
-      ),
-    [stageRecords]
-  );
-  const tunedStages = useMemo(() => TUNABLE_STAGES.filter((stage) => stage !== "input_validation"), []);
-  const overrideCount = tunedStages.filter((stage) => stageConfigs[stage].enabled).length;
-  const finalOutputComparison = useMemo(() => {
-    if (!previousResult || !deferredFinalResult?.finalOutput) return null;
-
-    const currentOutput = deferredFinalResult.finalOutput;
-    const previousOutput = previousResult.output;
-    const structuralReadChanged = stringifyValue(previousOutput.structuralRead) !== stringifyValue(currentOutput.structuralRead);
-    const oneLineTakeChanged = stringifyValue(previousOutput.oneLineTake) !== stringifyValue(currentOutput.oneLineTake);
-    const previousHypothesisWeights = new Map(
-      previousOutput.competingHypotheses.map((hypothesis) => [hypothesis.label, hypothesis.currentWeight])
-    );
-    const weightChanges = currentOutput.competingHypotheses.flatMap((hypothesis) => {
-      const previousWeight = previousHypothesisWeights.get(hypothesis.label);
-      if (!previousWeight || stringifyValue(previousWeight) === stringifyValue(hypothesis.currentWeight)) {
-        return [];
-      }
-
-      return [
-        {
-          label: hypothesis.label,
-          previousWeight,
-          currentWeight: hypothesis.currentWeight,
-        },
-      ];
-    });
-    const previousTriggerMap = new Map(
-      previousOutput.watchTriggers.map((trigger) => [getWatchTriggerKey(trigger), trigger])
-    );
-    const currentTriggerMap = new Map(
-      currentOutput.watchTriggers.map((trigger) => [getWatchTriggerKey(trigger), trigger])
-    );
-    const addedTriggers = currentOutput.watchTriggers.filter(
-      (trigger) => !previousTriggerMap.has(getWatchTriggerKey(trigger))
-    );
-    const removedTriggers = previousOutput.watchTriggers.filter(
-      (trigger) => !currentTriggerMap.has(getWatchTriggerKey(trigger))
-    );
-
-    return {
-      structuralReadChanged,
-      oneLineTakeChanged,
-      weightChanges,
-      addedTriggers,
-      removedTriggers,
-      hasChanges:
-        structuralReadChanged ||
-        oneLineTakeChanged ||
-        weightChanges.length > 0 ||
-        addedTriggers.length > 0 ||
-        removedTriggers.length > 0,
-    };
-  }, [deferredFinalResult, previousResult]);
-
-  const abComparison = useMemo(() => {
-    if (!deferredFinalResult?.finalOutput || !abResult?.finalOutput) return null;
-
-    const markdownA = deferredFinalResult.finalOutput.markdownOutput;
-    const markdownB = abResult.finalOutput.markdownOutput;
-    const sectionsA = getMarkdownSections(markdownA);
-    const sectionsB = getMarkdownSections(markdownB);
-
-    return {
-      markdownA,
-      markdownB,
-      charCountA: markdownA.length,
-      charCountB: markdownB.length,
-      onlyInA: getSectionDifference(sectionsA, sectionsB),
-      onlyInB: getSectionDifference(sectionsB, sectionsA),
-      oneLineTakeA: deferredFinalResult.finalOutput.oneLineTake,
-      oneLineTakeB: abResult.finalOutput.oneLineTake,
-    };
-  }, [abResult, deferredFinalResult]);
+  }, [abStage, setAbPromptOverride, stageConfigs]);
 
   function buildModelSettings(configs = stageConfigs): PipelineModelSettings {
     const stages = Object.fromEntries(
@@ -539,8 +269,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   }
 
   function resetStageOverride(stage: InsightStageName) {
-    updateStageConfig(stage, (current) => ({
-      ...current,
+    updateStageConfig(stage, () => ({
       enabled: false,
       expanded: false,
       model: commonModel,
@@ -573,20 +302,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
   function resetAllOverrides() {
     setStageConfigs(buildInitialStageConfigs(effectiveCommonModel, commonTemperature, commonMaxTokens));
-  }
-
-  function expandCustomizedOnly() {
-    setStageConfigs((prev) =>
-      Object.fromEntries(
-        Object.entries(prev).map(([stage, config]) => [
-          stage,
-          {
-            ...config,
-            expanded: config.enabled && stage !== "input_validation",
-          },
-        ])
-      ) as Record<InsightStageName, StageUiConfig>
-    );
   }
 
   async function handleExtract() {
@@ -626,13 +341,10 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         return;
       }
 
-      const json = JSON.stringify(structureResult.dataset, null, 2);
-      setRawJson(json);
+      setRawJson(JSON.stringify(structureResult.dataset, null, 2));
       setExtractPhase("done");
     } catch (caughtError) {
-      setExtractError(
-        caughtError instanceof Error ? caughtError.message : "URL 분석에 실패했습니다."
-      );
+      setExtractError(caughtError instanceof Error ? caughtError.message : "URL 분석에 실패했습니다.");
       setExtractPhase("error");
     }
   }
@@ -695,10 +407,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         },
         onSearchStart: (round, queries) => {
           startTransition(() => {
-            setSearchRounds((prev) => [
-              ...prev.filter((item) => item.round !== round),
-              { round, queries, results: [] },
-            ]);
+            setSearchRounds((prev) => [...prev.filter((item) => item.round !== round), { round, queries, results: [] }]);
           });
         },
         onSearchComplete: (round, results, searchError) => {
@@ -736,19 +445,8 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     if (applyFinalResult) {
       setFinalResult(result);
     }
-
-    if (eventId && persistResult && result.finalOutput && typeof window !== "undefined") {
-      try {
-        window.localStorage.setItem(
-          `${ANALYSIS_STORAGE_PREFIX}${eventId}`,
-          JSON.stringify({
-            timestamp: Date.now(),
-            eventId,
-            output: result.finalOutput,
-          })
-        );
-      } catch {
-      }
+    if (persistResult && result.finalOutput) {
+      saveAnalysis(result.finalOutput);
     }
 
     return result;
@@ -826,9 +524,11 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             startTransition(() => {
               setActiveStage(stage);
               setStageRecords((prev) => {
-                const existing = prev.find((r) => r.stage === stage);
+                const existing = prev.find((record) => record.stage === stage);
                 if (existing) {
-                  return prev.map((r) => r.stage === stage ? { ...r, status: "running" as StageStatus } : r);
+                  return prev.map((record) =>
+                    record.stage === stage ? { ...record, status: "running" as StageStatus } : record
+                  );
                 }
                 return [...prev, { stage, status: "running" as StageStatus, input: null }];
               });
@@ -845,10 +545,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
           },
           onSearchStart: (round, queries) => {
             startTransition(() => {
-              setSearchRounds((prev) => [
-                ...prev.filter((item) => item.round !== round),
-                { round, queries, results: [] },
-              ]);
+              setSearchRounds((prev) => [...prev.filter((item) => item.round !== round), { round, queries, results: [] }]);
             });
           },
           onSearchComplete: (round, results, searchError) => {
@@ -891,13 +588,13 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   }
 
   async function handleEvaluateStage(stage: InsightStageName) {
-    const record = stageRecords.find((r) => r.stage === stage);
+    const record = stageRecords.find((item) => item.stage === stage);
     if (!record?.output) return;
 
     setEvaluatingStage(stage);
     const config = stageConfigs[stage];
     const stagePrompt = config.enabled ? config.prompt : DEFAULT_STAGE_PROMPTS[stage];
-    const fullPrompt = systemPrompt + "\n\n" + stagePrompt;
+    const fullPrompt = `${systemPrompt}\n\n${stagePrompt}`;
     const outputStr = typeof record.output === "string" ? record.output : JSON.stringify(record.output, null, 2);
 
     const result = await evaluateStage(fullPrompt, outputStr, {
@@ -915,11 +612,10 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   }
 
   function handleCopy() {
-    let textToCopy = "";
     const output = deferredFinalResult?.finalOutput;
-
     if (!output) return;
 
+    let textToCopy = "";
     if (outputTemplate === "full") {
       textToCopy = editableMarkdown;
     } else if (outputTemplate === "summary") {
@@ -927,98 +623,15 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         .map((row) => `${row.company} (${row.exposureType}): ${row.whatChangesToday}`)
         .join("\n");
       textToCopy = `${output.oneLineTake}\n\n${output.structuralRead}\n\n${portfolioImpactSummary}`;
-    } else if (outputTemplate === "social") {
+    } else {
       textToCopy = `${output.oneLineTake} #투자분석`;
     }
 
-    if (textToCopy) {
-      navigator.clipboard.writeText(textToCopy).then(() => {
-        setCopyFeedback("복사됨!");
-        setTimeout(() => setCopyFeedback(null), 2000);
-      });
-    }
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      setCopyFeedback("복사됨!");
+      setTimeout(() => setCopyFeedback(null), 2000);
+    });
   }
-
-  const qualityMetrics = useMemo(() => {
-    const output = deferredFinalResult?.finalOutput;
-    if (!output) return null;
-
-    const markdownOutput = output.markdownOutput || "";
-    const charCount = markdownOutput.length;
-    const normalizedCharCount = Math.max(charCount, 1);
-
-    const sectionCount =
-      output.portfolioImpactTable.length +
-      output.watchTriggers.length +
-      output.competingHypotheses.length +
-      output.whySections.length +
-      output.historicalPrecedents.length +
-      (output.structuralRead ? 1 : 0) +
-      (output.premortem?.coreThesis ? 1 : 0);
-
-    const cjkMatches = markdownOutput.match(/[一-鿿]/g);
-    const cjkRatio = cjkMatches ? (cjkMatches.length / charCount) * 100 : 0;
-
-    const advisoryWords = ["매수", "매도", "비중 축소", "비중 확대", "적극 매수", "손절"];
-    const advisoryCheck = advisoryWords.some((word) => markdownOutput.includes(word)) ? "Fail" : "Pass";
-
-    const hypothesisCount = output.competingHypotheses.length;
-
-    const indicatorCount = output.portfolioImpactTable.reduce((sum, row) => {
-      const indicators = row.monitoringIndicators || (row as any).monitoring_indicators;
-      return sum + (indicators?.length || 0);
-    }, 0);
-
-    const numericMatches = markdownOutput.match(/\d+[\d,.]*(%|원|달러|조|억|만|건|개|명)?/g) ?? [];
-    const numericDensity = (numericMatches.length / normalizedCharCount) * 1000;
-
-    const causalMatches = markdownOutput.match(/→|때문에|결과적으로|따라서|이로 인해|이에 따라|영향으로/g) ?? [];
-    const causalChainDepth = causalMatches.length;
-
-    const evidenceRecord = stageRecords.find((record) => record.stage === "evidence_consolidation");
-    const evidenceOutput = evidenceRecord?.output;
-    const evidenceRaw = evidenceOutput && typeof evidenceOutput === "object"
-      ? (evidenceOutput as Record<string, unknown>)
-      : null;
-    const factsCandidate = [evidenceRaw?.facts, evidenceRaw?.verifiedFacts, evidenceRaw?.factEntries].find(Array.isArray) as
-      | Array<Record<string, unknown>>
-      | undefined;
-    const verifiedSources = new Set(
-      (factsCandidate ?? [])
-        .filter((item) => item?.status === "verified")
-        .map((item) => String(item.source ?? "").trim())
-        .filter(Boolean)
-    );
-    const urlSources = markdownOutput.match(/https?:\/\/[^\s)]+/g) ?? [];
-    const namedSources = Array.from(
-      markdownOutput.matchAll(/(?:출처|source)\s*[:：]\s*([^\n,;]+)/gi),
-      (match) => match[1].trim()
-    ).filter(Boolean);
-    const sourceCount = new Set([...verifiedSources, ...urlSources, ...namedSources]).size;
-
-    const temporalMatches = markdownOutput.match(/\d{1,2}\/\d{1,2}|\d{4}년|\d{1,2}월|\dQ\d|분기|반기/g) ?? [];
-    const temporalSpecificity = temporalMatches.length;
-
-    const counterargumentText = [
-      ...(output.inconsistencies ?? []).map((item) => JSON.stringify(item)),
-      ...(output.narrativeParallels ?? []).map((item) => JSON.stringify(item)),
-    ].join(" ");
-    const counterargumentQuality = /\d/.test(counterargumentText);
-
-    return {
-      charCount,
-      sectionCount,
-      cjkRatio,
-      advisoryCheck,
-      hypothesisCount,
-      indicatorCount,
-      numericDensity,
-      causalChainDepth,
-      sourceCount,
-      temporalSpecificity,
-      counterargumentQuality,
-    };
-  }, [deferredFinalResult, stageRecords]);
 
   return (
     <main className="shell">
@@ -1026,9 +639,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         <div className="heroCard">
           <span className="kicker">Standalone Localhost App</span>
           <h1 className="heroTitle">Layer-Stripping Workbench</h1>
-          <p className="heroText">
-            프롬프트 → 글 생성 → 편집 → 내보내기 → 리콜 워크플로우를 시험하는 콘솔입니다.
-          </p>
+          <p className="heroText">프롬프트 → 글 생성 → 편집 → 내보내기 → 리콜 워크플로우를 시험하는 콘솔입니다.</p>
         </div>
         <div className="heroMeta">
           <div className="metaPill">
@@ -1037,9 +648,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
           </div>
           <div className="metaPill">
             <span className="metaLabel">Search</span>
-            <div className="metaValue">
-              {searchProviders.find((p) => p.kind === searchProvider)?.label ?? "None"}
-            </div>
+            <div className="metaValue">{searchProviders.find((provider) => provider.kind === searchProvider)?.label ?? "None"}</div>
           </div>
           <div className="metaPill">
             <span className="metaLabel">Model</span>
@@ -1051,99 +660,77 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       <section className="workspace">
         <div className="panel">
           <h2 className="panelTitle">Run Profile</h2>
-          <p className="panelLead">
-            공통 설정을 기준으로 전체 단계를 돌리고, 필요한 단계만 별도 모델 프로필을 씌울 수 있습니다.
-          </p>
+          <p className="panelLead">공통 설정을 기준으로 전체 단계를 돌리고, 필요한 단계만 별도 모델 프로필을 씌울 수 있습니다.</p>
 
           <div className="urlAnalysisForm">
-              <div className="configCard">
-                <label className="fieldShell">
-                  <span className="fieldLabel">News URL</span>
-                  <input
-                    className="textInput urlInput"
-                    type="url"
-                    value={newsUrl}
-                    onChange={(event) => setNewsUrl(event.target.value)}
-                    placeholder="https://news.example.com/article/..."
-                    disabled={extractPhase === "fetching" || extractPhase === "structuring"}
-                  />
-                </label>
+            <div className="configCard">
+              <label className="fieldShell">
+                <span className="fieldLabel">News URL</span>
+                <input
+                  className="textInput urlInput"
+                  type="url"
+                  value={newsUrl}
+                  onChange={(event) => setNewsUrl(event.target.value)}
+                  placeholder="https://news.example.com/article/..."
+                  disabled={extractPhase === "fetching" || extractPhase === "structuring"}
+                />
+              </label>
 
-                <label className="fieldShell" style={{ marginTop: 14 }}>
-                  <span className="fieldLabel">Analysis Prompt</span>
-                  <textarea
-                    className="promptInput"
-                    value={analysisPrompt}
-                    onChange={(event) => setAnalysisPrompt(event.target.value)}
-                    placeholder="이 뉴스를 어떤 관점으로 분석할지 입력하세요..."
-                    rows={4}
-                    disabled={extractPhase === "fetching" || extractPhase === "structuring"}
-                    spellCheck={false}
-                  />
-                </label>
-              </div>
+              <label className="fieldShell" style={{ marginTop: 14 }}>
+                <span className="fieldLabel">Analysis Prompt</span>
+                <textarea
+                  className="promptInput"
+                  value={analysisPrompt}
+                  onChange={(event) => setAnalysisPrompt(event.target.value)}
+                  placeholder="이 뉴스를 어떤 관점으로 분석할지 입력하세요..."
+                  rows={4}
+                  disabled={extractPhase === "fetching" || extractPhase === "structuring"}
+                  spellCheck={false}
+                />
+              </label>
+            </div>
 
-              <div className="extractSteps">
-                <div className={`extractStep ${extractPhase === "fetching" ? "extractStepActive" : ""} ${fetchedText ? "extractStepDone" : ""}`}>
-                  <div className="extractStepHeader">
-                    <span className="extractStepNumber">1</span>
-                    <span className="extractStepLabel">URL Fetch</span>
-                    {extractPhase === "fetching" ? (
-                      <span className="statusBadge status-running">Fetching...</span>
-                    ) : null}
-                    {fetchedText ? (
-                      <span className="statusBadge status-success">
-                        {fetchedText.charCount.toLocaleString()} chars
-                        {fetchedText.truncated ? ` (truncated from ${fetchedText.originalCharCount.toLocaleString()})` : ""}
-                      </span>
-                    ) : null}
-                  </div>
+            <div className="extractSteps">
+              <div className={`extractStep ${extractPhase === "fetching" ? "extractStepActive" : ""} ${fetchedText ? "extractStepDone" : ""}`}>
+                <div className="extractStepHeader">
+                  <span className="extractStepNumber">1</span>
+                  <span className="extractStepLabel">URL Fetch</span>
+                  {extractPhase === "fetching" ? <span className="statusBadge status-running">Fetching...</span> : null}
                   {fetchedText ? (
-                    <pre className="extractPreview">{fetchedText.text.slice(0, 800)}{fetchedText.text.length > 800 ? "\n\n..." : ""}</pre>
+                    <span className="statusBadge status-success">
+                      {fetchedText.charCount.toLocaleString()} chars
+                      {fetchedText.truncated ? ` (truncated from ${fetchedText.originalCharCount.toLocaleString()})` : ""}
+                    </span>
                   ) : null}
                 </div>
-
-                <div className={`extractStep ${extractPhase === "structuring" ? "extractStepActive" : ""} ${extractPhase === "done" ? "extractStepDone" : ""}`}>
-                  <div className="extractStepHeader">
-                    <span className="extractStepNumber">2</span>
-                    <span className="extractStepLabel">LLM Structuring</span>
-                    {extractPhase === "structuring" ? (
-                      <span className="statusBadge status-running">
-                        {effectiveCommonModel} · temp {commonTemperature.toFixed(1)}
-                      </span>
-                    ) : null}
-                    {extractPhase === "done" ? (
-                      <span className="statusBadge status-success">Done</span>
-                    ) : null}
-                  </div>
-                  {extractPhase === "done" ? (
-                    <pre className="extractPreview">{rawJson.slice(0, 600)}{rawJson.length > 600 ? "\n\n..." : ""}</pre>
-                  ) : null}
-                </div>
+                {fetchedText ? <pre className="extractPreview">{fetchedText.text.slice(0, 800)}{fetchedText.text.length > 800 ? "\n\n..." : ""}</pre> : null}
               </div>
 
-              {extractError ? (
-                <div className="extractErrorCard">
-                  <span className="errorText">{extractError}</span>
+              <div className={`extractStep ${extractPhase === "structuring" ? "extractStepActive" : ""} ${extractPhase === "done" ? "extractStepDone" : ""}`}>
+                <div className="extractStepHeader">
+                  <span className="extractStepNumber">2</span>
+                  <span className="extractStepLabel">LLM Structuring</span>
+                  {extractPhase === "structuring" ? <span className="statusBadge status-running">{effectiveCommonModel} · temp {commonTemperature.toFixed(1)}</span> : null}
+                  {extractPhase === "done" ? <span className="statusBadge status-success">Done</span> : null}
                 </div>
-              ) : null}
-
-              <div className="actions">
-                <button
-                  type="button"
-                  className="primaryButton"
-                  onClick={handleExtract}
-                  disabled={extractPhase === "fetching" || extractPhase === "structuring" || !newsUrl.trim()}
-                >
-                  {extractPhase === "fetching" ? "Fetching URL..." : extractPhase === "structuring" ? "Structuring..." : "Extract & Structure"}
-                </button>
-                {extractPhase === "done" || extractPhase === "error" ? (
-                  <button type="button" className="secondaryButton" onClick={resetExtraction}>
-                    Reset
-                  </button>
-                ) : null}
+                {extractPhase === "done" ? <pre className="extractPreview">{rawJson.slice(0, 600)}{rawJson.length > 600 ? "\n\n..." : ""}</pre> : null}
               </div>
             </div>
+
+            {extractError ? <div className="extractErrorCard"><span className="errorText">{extractError}</span></div> : null}
+
+            <div className="actions">
+              <button
+                type="button"
+                className="primaryButton"
+                onClick={handleExtract}
+                disabled={extractPhase === "fetching" || extractPhase === "structuring" || !newsUrl.trim()}
+              >
+                {extractPhase === "fetching" ? "Fetching URL..." : extractPhase === "structuring" ? "Structuring..." : "Extract & Structure"}
+              </button>
+              {extractPhase === "done" || extractPhase === "error" ? <button type="button" className="secondaryButton" onClick={resetExtraction}>Reset</button> : null}
+            </div>
+          </div>
 
           <div className="searchProviderRow">
             <label className="fieldShell">
@@ -1181,26 +768,16 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               ))}
             </div>
 
-            {preset !== "custom" ? (
-              <div className="hintText" style={{ marginBottom: 12 }}>
-                {`Preset: ${PRESETS[preset].label} (temp ${PRESETS[preset].temperature}, tokens ${PRESETS[preset].maxTokens})`}
-              </div>
-            ) : null}
+            {preset !== "custom" ? <div className="hintText" style={{ marginBottom: 12 }}>{`Preset: ${PRESETS[preset].label} (temp ${PRESETS[preset].temperature}, tokens ${PRESETS[preset].maxTokens})`}</div> : null}
 
             <div className="profileGrid">
               <label className="fieldShell">
                 <span className="fieldLabel">Common Model</span>
-                <select
-                  className="selectInput"
-                  value={getSelectValue(commonModel)}
-                  onChange={(event) => handleCommonModelChange(event.target.value)}
-                >
+                <select className="selectInput" value={getSelectValue(commonModel)} onChange={(event) => handleCommonModelChange(event.target.value)}>
                   {MODEL_GROUPS.map((group) => (
                     <optgroup key={group.label} label={group.label}>
                       {group.options.map((option) => (
-                        <option key={option.value} value={option.value}>
-                          {option.label}
-                        </option>
+                        <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </optgroup>
                   ))}
@@ -1211,60 +788,27 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               <label className="fieldShell">
                 <span className="fieldLabel">Temperature</span>
                 <div className="rangeRow">
-                  <input
-                    type="range"
-                    min="0"
-                    max="1.5"
-                    step="0.1"
-                    value={commonTemperature}
-                    onChange={(event) => handleCommonTemperatureChange(Number(event.target.value))}
-                  />
-                  <input
-                    type="number"
-                    min="0"
-                    max="1.5"
-                    step="0.1"
-                    className="textInput"
-                    value={commonTemperature}
-                    onChange={(event) => handleCommonTemperatureChange(Number(event.target.value))}
-                  />
+                  <input type="range" min="0" max="1.5" step="0.1" value={commonTemperature} onChange={(event) => handleCommonTemperatureChange(Number(event.target.value))} />
+                  <input type="number" min="0" max="1.5" step="0.1" className="textInput" value={commonTemperature} onChange={(event) => handleCommonTemperatureChange(Number(event.target.value))} />
                 </div>
               </label>
 
               <label className="fieldShell">
                 <span className="fieldLabel">Max Tokens</span>
-                <input
-                  type="number"
-                  min="256"
-                  max="16000"
-                  step="100"
-                  className="textInput"
-                  value={commonMaxTokens}
-                  onChange={(event) => handleCommonMaxTokensChange(Number(event.target.value))}
-                />
+                <input type="number" min="256" max="16000" step="100" className="textInput" value={commonMaxTokens} onChange={(event) => handleCommonMaxTokensChange(Number(event.target.value))} />
               </label>
             </div>
 
             {getSelectValue(commonModel) === CUSTOM_MODEL_VALUE ? (
               <label className="fieldShell">
                 <span className="fieldLabel">Custom Common Model Id</span>
-                <input
-                  className="textInput"
-                  value={commonCustomModel}
-                  onChange={(event) => setCommonCustomModel(event.target.value)}
-                  placeholder="meta-llama/llama-4-maverick"
-                />
+                <input className="textInput" value={commonCustomModel} onChange={(event) => setCommonCustomModel(event.target.value)} placeholder="meta-llama/llama-4-maverick" />
               </label>
             ) : null}
 
             <div className="presetRow">
               {TOKEN_PRESETS.map((tokenPreset) => (
-                <button
-                  key={tokenPreset}
-                  type="button"
-                  className={`tokenPill ${commonMaxTokens === tokenPreset ? "tokenPillActive" : ""}`}
-                  onClick={() => handleCommonMaxTokensChange(tokenPreset)}
-                >
+                <button key={tokenPreset} type="button" className={`tokenPill ${commonMaxTokens === tokenPreset ? "tokenPillActive" : ""}`} onClick={() => handleCommonMaxTokensChange(tokenPreset)}>
                   {tokenPreset}
                 </button>
               ))}
@@ -1278,55 +822,25 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
               <span className="summaryPill">tokens {commonMaxTokens}</span>
             </div>
 
-            <div className="hintText">
-              {MODEL_NOTE_LOOKUP.get(effectiveCommonModel) ??
-                "커스텀 모델 ID를 직접 입력해 사용할 수 있습니다."}
-            </div>
+            <div className="hintText">{MODEL_NOTE_LOOKUP.get(effectiveCommonModel) ?? "커스텀 모델 ID를 직접 입력해 사용할 수 있습니다."}</div>
           </div>
 
           <div className="configCard systemPromptCard">
-            <button
-              type="button"
-              className="sectionHeader systemPromptToggle"
-              onClick={() => setSystemPromptOpen((prev) => !prev)}
-              aria-expanded={systemPromptOpen}
-            >
+            <button type="button" className="sectionHeader systemPromptToggle" onClick={() => setSystemPromptOpen((prev) => !prev)} aria-expanded={systemPromptOpen}>
               <div>
                 <h3 className="sectionTitle">System Prompt</h3>
-                <p className="panelLead">
-                  모든 Stage에 공통 적용되는 시스템 프롬프트입니다. 수정하면 전체 파이프라인 결과가 바뀝니다.
-                </p>
+                <p className="panelLead">모든 Stage에 공통 적용되는 시스템 프롬프트입니다. 수정하면 전체 파이프라인 결과가 바뀝니다.</p>
               </div>
               <div className="systemPromptBadges">
-                {systemPrompt !== defaultSystemPrompt ? (
-                  <span className="statusBadge status-running">Modified</span>
-                ) : (
-                  <span className="statusBadge status-success">Default</span>
-                )}
-                <span className="statusBadge status-running">
-                  {systemPromptOpen ? "▲ Collapse" : "▶ Expand"}
-                </span>
+                {systemPrompt !== defaultSystemPrompt ? <span className="statusBadge status-running">Modified</span> : <span className="statusBadge status-success">Default</span>}
+                <span className="statusBadge status-running">{systemPromptOpen ? "▲ Collapse" : "▶ Expand"}</span>
               </div>
             </button>
             {systemPromptOpen ? (
               <div className="systemPromptBody">
-                <textarea
-                  className="promptInput systemPromptInput"
-                  value={systemPrompt}
-                  onChange={(event) => setSystemPrompt(event.target.value)}
-                  spellCheck={false}
-                  rows={12}
-                />
+                <textarea className="promptInput systemPromptInput" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} spellCheck={false} rows={12} />
                 <div className="systemPromptActions">
-                  {systemPrompt !== defaultSystemPrompt ? (
-                    <button
-                      type="button"
-                      className="miniButton"
-                      onClick={() => setSystemPrompt(defaultSystemPrompt)}
-                    >
-                      Reset to Default
-                    </button>
-                  ) : null}
+                  {systemPrompt !== defaultSystemPrompt ? <button type="button" className="miniButton" onClick={() => setSystemPrompt(defaultSystemPrompt)}>Reset to Default</button> : null}
                   <span className="hintText">{systemPrompt.length} chars</span>
                 </div>
               </div>
@@ -1342,638 +856,56 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             >
               {isRunning || abRunning ? "Running..." : abMode ? "Run A/B" : "Run Pipeline"}
             </button>
-            <button
-              type="button"
-              className="secondaryButton"
-              onClick={() => setAbMode((prev) => !prev)}
-            >
-              {`A/B Compare: ${abMode ? "ON" : "OFF"}`}
-            </button>
-            <span className="statusLine">
-              {activeStage
-                ? `Active stage: ${STAGE_LABELS[activeStage]}`
-                : "Idle"}
-            </span>
+            <span className="statusLine">{activeStage ? `Active stage: ${STAGE_LABELS[activeStage]}` : "Idle"}</span>
           </div>
 
-          {abMode ? (
-            <div className="configCard" style={{ marginTop: 16 }}>
-              <div className="profileGrid">
-                <label className="fieldShell">
-                  <span className="fieldLabel">B Variant Stage</span>
-                  <select
-                    className="selectInput"
-                    value={abStage ?? ""}
-                    onChange={(event) => setAbStage((event.target.value || null) as InsightStageName | null)}
-                  >
-                    <option value="">Select stage...</option>
-                    {tunedStages.map((stage) => (
-                      <option key={`ab-${stage}`} value={stage}>
-                        {STAGE_LABELS[stage]}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                {abStage ? (
-                  <div className="profileSummary">
-                    <span className="summaryPill">A = current config</span>
-                    <span className="summaryPill summaryPillAccent">B = prompt override only</span>
-                    <span className="summaryPill">{STAGE_LABELS[abStage]}</span>
-                  </div>
-                ) : null}
-              </div>
-
-              {abStage ? (
-                <label className="fieldShell promptFieldShell">
-                  <div className="promptLabelRow">
-                    <span className="fieldLabel">B Prompt Override</span>
-                    <button
-                      type="button"
-                      className="miniButton"
-                      onClick={() => setAbPromptOverride(stageConfigs[abStage].prompt || DEFAULT_STAGE_PROMPTS[abStage])}
-                    >
-                      Reset to Current
-                    </button>
-                  </div>
-                  <textarea
-                    className="promptInput"
-                    value={abPromptOverride}
-                    spellCheck={false}
-                    rows={10}
-                    onChange={(event) => setAbPromptOverride(event.target.value)}
-                  />
-                </label>
-              ) : null}
-            </div>
-          ) : null}
+          <ABComparison
+            abMode={abMode}
+            setAbMode={setAbMode}
+            abStage={abStage}
+            setAbStage={setAbStage}
+            abPromptOverride={abPromptOverride}
+            setAbPromptOverride={setAbPromptOverride}
+            stageConfigs={stageConfigs}
+            tunedStages={tunedStages}
+            finalResult={deferredFinalResult}
+            abResult={abResult}
+          />
         </div>
 
-        <div className="pipelineDiagram">
-          {(() => {
-            type DiagramNode = {
-              id: string;
-              label: string;
-              short: string;
-              kind: "stage" | "search";
-              stage?: InsightStageName;
-              searchRound?: 1 | 2;
-            };
-            const nodes: DiagramNode[] = [
-              { id: "n0", label: "입력 검증", short: "0", kind: "stage", stage: "input_validation" },
-              { id: "s1", label: "Search R1", short: "🔍", kind: "search", searchRound: 1 },
-              { id: "n1", label: "전제 제거", short: "1", kind: "stage", stage: "layer0_layer1" },
-              { id: "n2", label: "분류", short: "2", kind: "stage", stage: "event_classification" },
-              { id: "n3", label: "반대 경로", short: "3", kind: "stage", stage: "layer2_reverse_paths" },
-              { id: "n4", label: "인접 전이", short: "4", kind: "stage", stage: "layer3_adjacent_spillover" },
-              { id: "n5", label: "포트폴리오", short: "5", kind: "stage", stage: "portfolio_impact" },
-              { id: "n6", label: "시간축", short: "6", kind: "stage", stage: "layer4_time_horizon" },
-              { id: "n7", label: "Premortem", short: "7", kind: "stage", stage: "layer5_structural_premortem" },
-              { id: "s2", label: "Search R2", short: "🔍", kind: "search", searchRound: 2 },
-              { id: "n8", label: "팩트 검증", short: "8", kind: "stage", stage: "evidence_consolidation" },
-              { id: "n9", label: "최종 출력", short: "9", kind: "stage", stage: "output_formatting" },
-            ];
+        <PipelineDiagram activeTab={activeTab} setActiveTab={setActiveTab} searchRounds={searchRounds} stageRecords={stageRecords} />
 
-            function getNodeStatus(node: DiagramNode): "idle" | "running" | "done" | "error" {
-              if (node.kind === "search") {
-                const sr = searchRounds.find((r) => r.round === node.searchRound);
-                if (!sr) return "idle";
-                if (sr.error) return "error";
-                if (sr.results.length > 0) return "done";
-                return "running";
-              }
-              if (!node.stage) return "idle";
-              const rec = stageRecords.find((r) => r.stage === node.stage);
-              if (!rec) return "idle";
-              if (rec.status === "running") return "running";
-              if (rec.status === "success") return "done";
-              if (rec.status === "error") return "error";
-              return "idle";
-            }
-
-            return nodes.map((node, idx) => (
-              <div key={node.id} className="diagramNodeWrap">
-                <button
-                  type="button"
-                  className={`diagramNode diagramNode-${node.kind} diagramNode-${getNodeStatus(node)} ${
-                    (node.stage && activeTab === node.stage) ||
-                    (node.kind === "search" && activeTab === (node.searchRound === 1 ? "searchR1" : "searchR2"))
-                      ? "diagramNodeActive"
-                      : ""
-                  }`}
-                  onClick={() => {
-                    if (node.stage && node.stage !== "input_validation") {
-                      setActiveTab(node.stage);
-                    } else if (node.kind === "search") {
-                      setActiveTab(node.searchRound === 1 ? "searchR1" : "searchR2");
-                    }
-                  }}
-                  disabled={node.stage === "input_validation"}
-                >
-                  <span className="diagramNodeShort">{node.short}</span>
-                  <span className="diagramNodeLabel">{node.label}</span>
-                </button>
-                {idx < nodes.length - 1 ? <span className="diagramArrow">→</span> : null}
-              </div>
-            ));
-          })()}
-        </div>
-
-        <div className="stageTabs">
-          <div className="stageTabStrip">
-            {tunedStages.map((stage) => {
-              const record = stageRecords.find((r) => r.stage === stage);
-              const isBusy = runningStage === stage || (isRunning && activeStage === stage);
-              return (
-                <button
-                  key={stage}
-                  type="button"
-                  className={`stageTab ${activeTab === stage ? "stageTabActive" : ""} ${stageConfigs[stage].enabled ? "stageTabCustom" : ""} ${record?.status === "success" ? "stageTabDone" : ""} ${record?.status === "error" ? "stageTabError" : ""} ${isBusy ? "stageTabRunning" : ""}`}
-                  onClick={() => setActiveTab(stage)}
-                >
-                  <span className="stageTabNum">{STAGE_ORDER.indexOf(stage)}</span>
-                  <span className="stageTabName">{STAGE_LABELS[stage].replace(/^\d+\.\s*/, "")}</span>
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              className={`stageTab stageTabSearch ${activeTab === "searchR1" ? "stageTabActive" : ""} ${searchRounds.find((r) => r.round === 1 && r.results.length > 0) ? "stageTabDone" : ""}`}
-              onClick={() => setActiveTab("searchR1")}
-            >
-              <span className="stageTabNum">🔍</span>
-              <span className="stageTabName">Search R1</span>
-            </button>
-            <button
-              type="button"
-              className={`stageTab stageTabSearch ${activeTab === "searchR2" ? "stageTabActive" : ""} ${searchRounds.find((r) => r.round === 2 && r.results.length > 0) ? "stageTabDone" : ""}`}
-              onClick={() => setActiveTab("searchR2")}
-            >
-              <span className="stageTabNum">🔍</span>
-              <span className="stageTabName">Search R2</span>
-            </button>
-          </div>
-
-          {tunedStages.map((stage) => {
-            if (activeTab !== stage) return null;
-            const config = stageConfigs[stage];
-            const record = stageRecords.find((r) => r.stage === stage);
-            const effectiveModel = config.enabled
-              ? getEffectiveModel(config.model, config.customModel)
-              : effectiveCommonModel;
-            const effectiveTemperature = config.enabled ? config.temperature : commonTemperature;
-            const effectiveMaxTokens = config.enabled ? config.maxTokens : commonMaxTokens;
-            const isBusy = runningStage === stage || isRunning;
-
-            return (
-              <div key={stage} className="stageTabPanel">
-                <div className="stageTabPanelHeader">
-                  <div>
-                    <h3 className="sectionTitle">{STAGE_LABELS[stage]}</h3>
-                    <p className="panelLead">{STAGE_DESCRIPTIONS[stage]}</p>
-                  </div>
-                  <div className="stageTabPanelActions">
-                    <button
-                      type="button"
-                      className="runStageButton"
-                      disabled={isBusy || !rawJson.trim()}
-                      onClick={() => handleRunStage(stage)}
-                    >
-                      {runningStage === stage ? "분석 중..." : "▶ Run This Stage"}
-                    </button>
-                    {record?.status === "success" ? (
-                      <span className="statusBadge status-success">
-                        {typeof record.elapsedMs === "number" ? `${record.elapsedMs}ms` : "Done"}
-                      </span>
-                    ) : null}
-                    {record?.status === "error" ? (
-                      <span className="statusBadge status-error">Error</span>
-                    ) : null}
-                    {record?.status === "running" ? (
-                      <span className="statusBadge status-running">Running</span>
-                    ) : null}
-                  </div>
-                </div>
-
-                <div className="stageTabPanelGrid">
-                  <div className="stageTabPanelCol">
-                    <h4 className="stageTabSubhead">Settings</h4>
-                    <div className="stageSettingsCompact">
-                      <span className="summaryPill">{effectiveModel}</span>
-                      <span className="summaryPill">temp {effectiveTemperature.toFixed(1)}</span>
-                      <span className="summaryPill">tokens {effectiveMaxTokens}</span>
-                      <span className={`summaryPill ${config.enabled ? "summaryPillAccent" : ""}`}>
-                        {config.enabled ? "Custom" : "Common"}
-                      </span>
-                    </div>
-
-                    <label className="toggleRow">
-                      <input
-                        type="checkbox"
-                        checked={config.enabled}
-                        onChange={(event) =>
-                          updateStageConfig(stage, (current) => ({
-                            ...current,
-                            enabled: event.target.checked,
-                            model: commonModel,
-                            customModel: commonCustomModel,
-                            temperature: commonTemperature,
-                            maxTokens: stage === "output_formatting" ? OUTPUT_STAGE_TOKENS : commonMaxTokens,
-                          }))
-                        }
-                      />
-                      <span>Use custom settings</span>
-                    </label>
-
-                    {config.enabled ? (
-                      <>
-                        <div className="overrideFields">
-                          <label className="fieldShell">
-                            <span className="fieldLabel">Model</span>
-                            <select
-                              className="selectInput"
-                              value={getSelectValue(config.model)}
-                              onChange={(event) => handleStageModelChange(stage, event.target.value)}
-                            >
-                              {MODEL_GROUPS.map((group) => (
-                                <optgroup key={group.label} label={group.label}>
-                                  {group.options.map((option) => (
-                                    <option key={option.value} value={option.value}>
-                                      {option.label}
-                                    </option>
-                                  ))}
-                                </optgroup>
-                              ))}
-                              <option value={CUSTOM_MODEL_VALUE}>Custom model id...</option>
-                            </select>
-                          </label>
-                          <label className="fieldShell">
-                            <span className="fieldLabel">Temperature</span>
-                            <div className="rangeRow">
-                              <input type="range" min="0" max="1.5" step="0.1" value={config.temperature}
-                                onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, temperature: Number(event.target.value) }))} />
-                              <input type="number" min="0" max="1.5" step="0.1" className="textInput" value={config.temperature}
-                                onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, temperature: Number(event.target.value) }))} />
-                            </div>
-                          </label>
-                          <label className="fieldShell">
-                            <span className="fieldLabel">Max Tokens</span>
-                            <input type="number" min="256" max="16000" step="100" className="textInput" value={config.maxTokens}
-                                onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, maxTokens: Number(event.target.value) }))} />
-                          </label>
-                        </div>
-
-                        {getSelectValue(config.model) === CUSTOM_MODEL_VALUE ? (
-                          <label className="fieldShell">
-                            <span className="fieldLabel">Custom Model Id</span>
-                            <input className="textInput" value={config.customModel} placeholder="x-ai/grok-4.1-fast"
-                              onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, customModel: event.target.value }))} />
-                          </label>
-                        ) : null}
-                        <label className="fieldShell promptFieldShell">
-                          <div className="promptLabelRow">
-                            <span className="fieldLabel">Stage Prompt</span>
-                            {config.prompt.trim() !== DEFAULT_STAGE_PROMPTS[stage].trim() ? (
-                              <button type="button" className="miniButton"
-                                onClick={() => updateStageConfig(stage, (c) => ({ ...c, prompt: DEFAULT_STAGE_PROMPTS[stage] }))}>
-                                Reset Prompt
-                              </button>
-                            ) : null}
-                          </div>
-                          <textarea className="promptInput" value={config.prompt} spellCheck={false} rows={6}
-                            onChange={(event) => updateStageConfig(stage, (c) => ({ ...c, prompt: event.target.value }))} />
-                        </label>
-
-                        <div className="presetRow">
-                          {TOKEN_PRESETS.map((tp) => (
-                            <button key={`${stage}-${tp}`} type="button"
-                              className={`tokenPill ${config.maxTokens === tp ? "tokenPillActive" : ""}`}
-                              onClick={() => updateStageConfig(stage, (c) => ({ ...c, maxTokens: tp }))}>
-                              {tp}
-                            </button>
-                          ))}
-                        </div>
-
-                        <div className="overrideFooter">
-                          <span className="hintText">
-                            {MODEL_NOTE_LOOKUP.get(effectiveModel) ?? "커스텀 모델 ID가 그대로 사용됩니다."}
-                          </span>
-                          <button type="button" className="miniButton" onClick={() => resetStageOverride(stage)}>Reset</button>
-                        </div>
-                      </>
-                    ) : null}
-
-                    <details className="fullPromptPreview">
-                      <summary className="fullPromptSummary">
-                        Full Prompt Preview (System + Stage)
-                      </summary>
-                      <pre className="codeBlock stageResultBlock">{systemPrompt + "\n\n" + (config.enabled ? config.prompt : DEFAULT_STAGE_PROMPTS[stage])}</pre>
-                    </details>
-                  </div>
-
-                  <div className="stageTabPanelCol">
-                    <h4 className="stageTabSubhead">Execution Flow</h4>
-                    {record ? (
-                      <>
-                        {record.error ? <p className="errorText">{record.error}</p> : null}
-                        <div className="metaRow">
-                          {typeof record.elapsedMs === "number" ? <span>{record.elapsedMs} ms</span> : null}
-                          {record.searchResults ? <span>search facts {record.searchResults.length}</span> : null}
-                        </div>
-
-                        <details className="stageFlowBlock">
-                          <summary className="stageFlowSummary">
-                            <span className="stageFlowLabel">① LLM System Prompt</span>
-                            <span className="stageFlowMeta">{(systemPrompt + "\n\n" + (record.prompt || DEFAULT_STAGE_PROMPTS[stage])).length.toLocaleString()} chars</span>
-                          </summary>
-                          <pre className="codeBlock stageResultBlock">{systemPrompt + "\n\n" + (record.prompt || DEFAULT_STAGE_PROMPTS[stage])}</pre>
-                        </details>
-
-                        <details className="stageFlowBlock">
-                          <summary className="stageFlowSummary">
-                            <span className="stageFlowLabel">② LLM User Input</span>
-                            <span className="stageFlowMeta">
-                              {record.userContent
-                                ? `${record.userContent.length.toLocaleString()} chars`
-                                : "not captured"}
-                            </span>
-                          </summary>
-                          {record.userContent ? (
-                            <pre className="codeBlock stageResultBlock">{(() => {
-                              try { return prettyJson(JSON.parse(record.userContent)); }
-                              catch { return record.userContent; }
-                            })()}</pre>
-                          ) : (
-                            <pre className="codeBlock stageResultBlock">{prettyJson(record.input)}</pre>
-                          )}
-                        </details>
-
-                        <div className="stageFlowBlock stageFlowBlockOpen">
-                          <div className="stageFlowSummary">
-                            <span className="stageFlowLabel">③ LLM Output</span>
-                            <span className="stageFlowMeta">
-                              {record.output ? `${JSON.stringify(record.output).length.toLocaleString()} chars` : "—"}
-                            </span>
-                          </div>
-                          <pre className="codeBlock stageResultBlock">{prettyJson(record.output ?? record.input)}</pre>
-                        </div>
-
-                        {record.status === "success" && record.output ? (
-                          <div className="stageEvalSection">
-                            <div className="stageEvalHeader">
-                              <button
-                                type="button"
-                                className="evalStageButton"
-                                disabled={evaluatingStage === stage}
-                                onClick={() => handleEvaluateStage(stage)}
-                              >
-                                {evaluatingStage === stage ? "Evaluating..." : "📋 Evaluate Stage"}
-                              </button>
-                              {stageEvaluations[stage] ? (
-                                <span className={`evalScoreBadge ${stageEvaluations[stage]!.overall_score >= 80 ? "evalScoreGood" : stageEvaluations[stage]!.overall_score >= 50 ? "evalScoreOk" : "evalScoreBad"}`}>
-                                  {stageEvaluations[stage]!.overall_score}/100
-                                </span>
-                              ) : null}
-                            </div>
-
-                            {stageEvaluations[stage] ? (
-                              <div className="stageEvalResult">
-                                <p className="evalSummary">{stageEvaluations[stage]!.summary}</p>
-                                <div className="evalChecklist">
-                                  {stageEvaluations[stage]!.checklist.map((item, idx) => (
-                                    <div key={idx} className={`checklistItem checklistItem-${item.verdict}`}>
-                                      <div className="checklistHeader">
-                                        <span className="checklistVerdict">
-                                          {item.verdict === "pass" ? "✅" : item.verdict === "partial" ? "⚠️" : "❌"}
-                                        </span>
-                                        <span className="checklistCriterion">{item.criterion}</span>
-                                        <span className="checklistSource">{item.source}</span>
-                                        <span className="checklistScore">{item.score}</span>
-                                      </div>
-                                      <p className="checklistComment">{item.comment}</p>
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </>
-                    ) : (
-                      <p className="panelLead">이 단계는 아직 실행되지 않았습니다. ▶ Run This Stage 로 실행하세요.</p>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
-          {activeTab === "searchR1" ? (
-            <div className="stageTabPanel searchTabPanel">
-              <div className="stageTabPanelHeader">
-                <div>
-                  <h3 className="sectionTitle">Search Round 1 — Pre-Analysis</h3>
-                  <p className="panelLead">파이프라인 시작 전 컨텍스트 수집을 위한 웹 검색 쿼리를 LLM으로 생성합니다.</p>
-                </div>
-                <div className="stageTabPanelActions">
-                  {(() => {
-                    const sr = searchRounds.find((r) => r.round === 1);
-                    if (sr?.error) return <span className="statusBadge status-error">Error</span>;
-                    if (sr?.results.length) return (
-                      <span className="statusBadge status-success">{sr.results.length} results · {sr.queries.length} queries</span>
-                    );
-                    return null;
-                  })()}
-                </div>
-              </div>
-              <div className="stageTabPanelGrid">
-                <div className="stageTabPanelCol">
-                  <h4 className="stageTabSubhead">Query Generation Settings</h4>
-                  <div className="stageSettingsCompact">
-                    <span className="summaryPill">{searchR1Config.model || effectiveCommonModel}</span>
-                    <span className="summaryPill">temp {(searchR1Config.temperature ?? 0.3).toFixed(1)}</span>
-                    <span className="summaryPill">tokens {searchR1Config.maxTokens ?? 800}</span>
-                  </div>
-                  <div className="overrideFields">
-                    <label className="fieldShell">
-                      <span className="fieldLabel">Model (empty = Common)</span>
-                      <select
-                        className="selectInput"
-                        value={searchR1Config.model || ""}
-                        onChange={(e) => setSearchR1Config((prev) => ({ ...prev, model: e.target.value }))}
-                      >
-                        <option value="">Use Common Model</option>
-                        {MODEL_GROUPS.map((group) => (
-                          <optgroup key={group.label} label={group.label}>
-                            {group.options.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="fieldShell">
-                      <span className="fieldLabel">Temperature</span>
-                      <div className="rangeRow">
-                        <input type="range" min="0" max="1.5" step="0.1" value={searchR1Config.temperature ?? 0.3}
-                          onChange={(e) => setSearchR1Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
-                        <input type="number" min="0" max="1.5" step="0.1" className="textInput" value={searchR1Config.temperature ?? 0.3}
-                          onChange={(e) => setSearchR1Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
-                      </div>
-                    </label>
-                    <label className="fieldShell">
-                      <span className="fieldLabel">Max Tokens</span>
-                      <input type="number" min="256" max="4000" step="100" className="textInput" value={searchR1Config.maxTokens ?? 800}
-                        onChange={(e) => setSearchR1Config((prev) => ({ ...prev, maxTokens: Number(e.target.value) }))} />
-                    </label>
-                  </div>
-                  <label className="fieldShell promptFieldShell">
-                    <div className="promptLabelRow">
-                      <span className="fieldLabel">Query Generation Prompt</span>
-                      {searchR1Config.prompt !== SEARCH_R1_DEFAULT_PROMPT ? (
-                        <button type="button" className="miniButton"
-                          onClick={() => setSearchR1Config((prev) => ({ ...prev, prompt: SEARCH_R1_DEFAULT_PROMPT }))}>
-                          Reset Prompt
-                        </button>
-                      ) : null}
-                    </div>
-                    <textarea className="promptInput" value={searchR1Config.prompt ?? ""} spellCheck={false} rows={6}
-                      onChange={(e) => setSearchR1Config((prev) => ({ ...prev, prompt: e.target.value }))} />
-                  </label>
-                </div>
-                <div className="stageTabPanelCol">
-                  <h4 className="stageTabSubhead">Search Results</h4>
-                  {(() => {
-                    const sr = searchRounds.find((r) => r.round === 1);
-                    if (!sr) return <p className="panelLead">검색 결과가 아직 없습니다. 파이프라인을 실행하면 결과가 여기에 표시됩니다.</p>;
-                    return (
-                      <>
-                        {sr.error ? <p className="errorText">{sr.error}</p> : null}
-                        <div className="stageSettingsCompact">
-                          <span className="summaryPill">{sr.queries.length} queries</span>
-                          <span className="summaryPill">{sr.results.length} results</span>
-                        </div>
-                        <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Generated Queries</h5>
-                        <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.queries, null, 2)}</pre>
-                        {sr.results.length > 0 ? (
-                          <>
-                            <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Results</h5>
-                            <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.results, null, 2)}</pre>
-                          </>
-                        ) : null}
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {activeTab === "searchR2" ? (
-            <div className="stageTabPanel searchTabPanel">
-              <div className="stageTabPanelHeader">
-                <div>
-                  <h3 className="sectionTitle">Search Round 2 — Counter-Argument</h3>
-                  <p className="panelLead">분석 완료 후 반론과 검증을 위한 검색 쿼리를 생성합니다.</p>
-                </div>
-                <div className="stageTabPanelActions">
-                  {(() => {
-                    const sr = searchRounds.find((r) => r.round === 2);
-                    if (sr?.error) return <span className="statusBadge status-error">Error</span>;
-                    if (sr?.results.length) return (
-                      <span className="statusBadge status-success">{sr.results.length} results · {sr.queries.length} queries</span>
-                    );
-                    return null;
-                  })()}
-                </div>
-              </div>
-              <div className="stageTabPanelGrid">
-                <div className="stageTabPanelCol">
-                  <h4 className="stageTabSubhead">Query Generation Settings</h4>
-                  <div className="stageSettingsCompact">
-                    <span className="summaryPill">{searchR2Config.model || effectiveCommonModel}</span>
-                    <span className="summaryPill">temp {(searchR2Config.temperature ?? 0.3).toFixed(1)}</span>
-                    <span className="summaryPill">tokens {searchR2Config.maxTokens ?? 800}</span>
-                  </div>
-                  <div className="overrideFields">
-                    <label className="fieldShell">
-                      <span className="fieldLabel">Model (empty = Common)</span>
-                      <select
-                        className="selectInput"
-                        value={searchR2Config.model || ""}
-                        onChange={(e) => setSearchR2Config((prev) => ({ ...prev, model: e.target.value }))}
-                      >
-                        <option value="">Use Common Model</option>
-                        {MODEL_GROUPS.map((group) => (
-                          <optgroup key={group.label} label={group.label}>
-                            {group.options.map((opt) => (
-                              <option key={opt.value} value={opt.value}>{opt.label}</option>
-                            ))}
-                          </optgroup>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="fieldShell">
-                      <span className="fieldLabel">Temperature</span>
-                      <div className="rangeRow">
-                        <input type="range" min="0" max="1.5" step="0.1" value={searchR2Config.temperature ?? 0.3}
-                          onChange={(e) => setSearchR2Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
-                        <input type="number" min="0" max="1.5" step="0.1" className="textInput" value={searchR2Config.temperature ?? 0.3}
-                          onChange={(e) => setSearchR2Config((prev) => ({ ...prev, temperature: Number(e.target.value) }))} />
-                      </div>
-                    </label>
-                    <label className="fieldShell">
-                      <span className="fieldLabel">Max Tokens</span>
-                      <input type="number" min="256" max="4000" step="100" className="textInput" value={searchR2Config.maxTokens ?? 800}
-                        onChange={(e) => setSearchR2Config((prev) => ({ ...prev, maxTokens: Number(e.target.value) }))} />
-                    </label>
-                  </div>
-                  <label className="fieldShell promptFieldShell">
-                    <div className="promptLabelRow">
-                      <span className="fieldLabel">Query Generation Prompt</span>
-                      {searchR2Config.prompt !== SEARCH_R2_DEFAULT_PROMPT ? (
-                        <button type="button" className="miniButton"
-                          onClick={() => setSearchR2Config((prev) => ({ ...prev, prompt: SEARCH_R2_DEFAULT_PROMPT }))}>
-                          Reset Prompt
-                        </button>
-                      ) : null}
-                    </div>
-                    <textarea className="promptInput" value={searchR2Config.prompt ?? ""} spellCheck={false} rows={6}
-                      onChange={(e) => setSearchR2Config((prev) => ({ ...prev, prompt: e.target.value }))} />
-                  </label>
-                </div>
-                <div className="stageTabPanelCol">
-                  <h4 className="stageTabSubhead">Search Results</h4>
-                  {(() => {
-                    const sr = searchRounds.find((r) => r.round === 2);
-                    if (!sr) return <p className="panelLead">검색 결과가 아직 없습니다. 파이프라인을 실행하면 결과가 여기에 표시됩니다.</p>;
-                    return (
-                      <>
-                        {sr.error ? <p className="errorText">{sr.error}</p> : null}
-                        <div className="stageSettingsCompact">
-                          <span className="summaryPill">{sr.queries.length} queries</span>
-                          <span className="summaryPill">{sr.results.length} results</span>
-                        </div>
-                        <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Generated Queries</h5>
-                        <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.queries, null, 2)}</pre>
-                        {sr.results.length > 0 ? (
-                          <>
-                            <h5 className="stageTabSubhead" style={{ marginTop: 12 }}>Results</h5>
-                            <pre className="codeBlock stageResultBlock">{JSON.stringify(sr.results, null, 2)}</pre>
-                          </>
-                        ) : null}
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="inlineActions" style={{ marginTop: 8 }}>
-            <button type="button" className="miniButton" onClick={applyCommonToAll}>Apply Common To All</button>
-            <button type="button" className="miniButton" onClick={resetAllOverrides}>Reset All Overrides</button>
-          </div>
-        </div>
+        <StageWorkbench
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          tunedStages={tunedStages}
+          stageRecords={stageRecords}
+          stageConfigs={stageConfigs}
+          searchRounds={searchRounds}
+          runningStage={runningStage}
+          isRunning={isRunning}
+          activeStage={activeStage}
+          rawJson={rawJson}
+          commonModel={commonModel}
+          commonCustomModel={commonCustomModel}
+          commonTemperature={commonTemperature}
+          commonMaxTokens={commonMaxTokens}
+          effectiveCommonModel={effectiveCommonModel}
+          systemPrompt={systemPrompt}
+          evaluatingStage={evaluatingStage}
+          stageEvaluations={stageEvaluations}
+          searchR1Config={searchR1Config}
+          setSearchR1Config={setSearchR1Config}
+          searchR2Config={searchR2Config}
+          setSearchR2Config={setSearchR2Config}
+          updateStageConfig={updateStageConfig}
+          handleStageModelChange={handleStageModelChange}
+          resetStageOverride={resetStageOverride}
+          handleRunStage={handleRunStage}
+          handleEvaluateStage={handleEvaluateStage}
+          applyCommonToAll={applyCommonToAll}
+          resetAllOverrides={resetAllOverrides}
+        />
 
         <div className="stack">
           {error ? (
@@ -1986,540 +918,50 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
             </section>
           ) : null}
 
-          <section className="resultCard">
-            <div className="resultHeader">
-              <h2 className="resultTitle">Search Rounds</h2>
-              <span className="statusBadge status-success">{searchRounds.length} active logs</span>
-            </div>
-            <div className="stack">
-              {searchRounds.length === 0 ? (
-                <p className="panelLead">아직 검색 라운드가 시작되지 않았습니다.</p>
-              ) : (
-                searchRounds
-                  .sort((a, b) => a.round - b.round)
-                  .map((roundState) => (
-                    <article key={roundState.round} className="stageCard">
-                      <div className="stageHeader">
-                        <h3 className="stageTitle">Round {roundState.round}</h3>
-                        <span className="statusBadge status-success">
-                          results {roundState.results.length}
-                        </span>
-                      </div>
-                      <div className="metaRow">
-                        <span>{roundState.queries.length} queries</span>
-                        {roundState.error ? <span className="errorText">{roundState.error}</span> : null}
-                      </div>
-                      <pre className="codeBlock">{prettyJson(roundState.queries)}</pre>
-                    </article>
-                  ))
-              )}
-            </div>
-          </section>
-
-
+          <SearchRoundsLog searchRounds={searchRounds} />
 
           <section className="resultCard">
             <div className="resultHeader">
               <h2 className="resultTitle">Final Output</h2>
-              <span className="statusBadge status-success">
-                {deferredFinalResult?.finalOutput ? "Ready" : "Pending"}
-              </span>
-            {qualityMetrics ? (
-              <div className="metaRow" style={{ marginTop: 10, marginBottom: 10 }}>
-                <span className="summaryPill">{qualityMetrics.charCount.toLocaleString()}자</span>
-                <span className="summaryPill">섹션 {qualityMetrics.sectionCount}개</span>
-                <span
-                  className="summaryPill"
-                  style={qualityMetrics.cjkRatio > 0 ? { backgroundColor: "#fee2e2", color: "#ef4444" } : {}}
-                >
-                  CJK {qualityMetrics.cjkRatio.toFixed(1)}% {qualityMetrics.cjkRatio === 0 ? "✓" : ""}
-                </span>
-                <span
-                  className="summaryPill"
-                  style={qualityMetrics.advisoryCheck === "Fail" ? { backgroundColor: "#fee2e2", color: "#ef4444" } : {}}
-                >
-                  투자조언 {qualityMetrics.advisoryCheck === "Pass" ? "없음✓" : "있음"}
-                </span>
-                <span className="summaryPill">가설 {qualityMetrics.hypothesisCount}개</span>
-                <span className="summaryPill">지표 {qualityMetrics.indicatorCount}개</span>
-                <span
-                  className="summaryPill"
-                  style={getMetricStyle(
-                    qualityMetrics.numericDensity >= 4
-                      ? "good"
-                      : qualityMetrics.numericDensity < 2
-                        ? "bad"
-                        : "neutral"
-                  )}
-                >
-                  수치 {qualityMetrics.numericDensity.toFixed(1)}/K
-                </span>
-                <span
-                  className="summaryPill"
-                  style={getMetricStyle(
-                    qualityMetrics.causalChainDepth >= 3
-                      ? "good"
-                      : qualityMetrics.causalChainDepth < 2
-                        ? "bad"
-                        : "neutral"
-                  )}
-                >
-                  인과 {qualityMetrics.causalChainDepth}단계
-                </span>
-                <span
-                  className="summaryPill"
-                  style={getMetricStyle(
-                    qualityMetrics.sourceCount >= 5
-                      ? "good"
-                      : qualityMetrics.sourceCount < 3
-                        ? "bad"
-                        : "neutral"
-                  )}
-                >
-                  출처 {qualityMetrics.sourceCount}개
-                </span>
-                <span
-                  className="summaryPill"
-                  style={getMetricStyle(
-                    qualityMetrics.temporalSpecificity >= 5
-                      ? "good"
-                      : qualityMetrics.temporalSpecificity < 3
-                        ? "bad"
-                        : "neutral"
-                  )}
-                >
-                  날짜 {qualityMetrics.temporalSpecificity}개
-                </span>
-                <span
-                  className="summaryPill"
-                  style={getMetricStyle(qualityMetrics.counterargumentQuality ? "good" : "bad")}
-                >
-                  반론+수치 {qualityMetrics.counterargumentQuality ? "✓" : "✗"}
-                </span>
-              </div>
-            ) : null}
+              <span className="statusBadge status-success">{deferredFinalResult?.finalOutput ? "Ready" : "Pending"}</span>
+              {qualityMetrics ? <QualityDashboard metrics={qualityMetrics} /> : null}
             </div>
 
             {deferredFinalResult?.finalOutput ? (
               <div className="resultGrid">
                 {previousResult && finalOutputComparison ? (
-                <details className="summaryBlock" open>
-                  <summary className="summaryLabel">
-                    <span>분석 이력 ({analysisHistory.length})</span>
-                  </summary>
-                  <input
-                    type="text"
-                    className="textInput"
-                    placeholder="키워드로 검색... (이벤트 제목, 종목명)"
-                    value={historySearch}
-                    onChange={(e) => setHistorySearch(e.target.value)}
-                    style={{ marginBottom: 10 }}
-                  />
-                  <div className="triggerList">
-                    {analysisHistory
-                      .filter((analysis) => {
-                        const searchTerm = historySearch.toLowerCase();
-                        return (
-                          analysis.eventId.toLowerCase().includes(searchTerm) ||
-                          analysis.output.oneLineTake.toLowerCase().includes(searchTerm) ||
-                          analysis.output.markdownOutput.toLowerCase().includes(searchTerm)
-                        );
-                      })
-                      .map((analysis) => (
-                        <div key={analysis.eventId} className="listCard">
-                          <div className="metaRow">
-                            <strong>{analysis.eventId}</strong>
-                            <span className="summaryPill">{formatStoredDate(analysis.timestamp)}</span>
-                            <button type="button" className="miniButton" onClick={() => loadAnalysis(analysis)}>
-                              Load
-                            </button>
-                          </div>
-                          <div>{analysis.output.oneLineTake}</div>
-                        </div>
-                      ))}
-                  </div>
-                </details>
+                  <AnalysisHistory history={analysisHistory} historySearch={historySearch} setHistorySearch={setHistorySearch} onLoad={loadAnalysis} title="분석 이력" open compact />
                 ) : null}
 
-                <div className="summaryBlock">
-                  <span className="summaryLabel">One Line Take</span>
-                  <div>{deferredFinalResult.finalOutput.oneLineTake}</div>
-                  <span className={`summaryPill ${deferredFinalResult.finalOutput.mode === "personalized" ? "summaryPillAccent" : ""}`}>
-                    {deferredFinalResult.finalOutput.mode === "personalized" ? "Personalized" : "General"}
-                  </span>
-                </div>
+                <FinalOutputPanel finalOutput={deferredFinalResult.finalOutput} mode={deferredFinalResult.finalOutput.mode} />
 
-                <div className="summaryBlock">
-                  <span className="summaryLabel">Structural Read</span>
-                  <div>{deferredFinalResult.finalOutput.structuralRead}</div>
-                </div>
-
-                <div className="summaryBlock">
-                  <span className="summaryLabel">
-                    {deferredFinalResult.finalOutput.mode === "personalized"
-                      ? "Portfolio Impact"
-                      : "Affected Entities"}
-                  </span>
-                  <div className="triggerList">
-                    {deferredFinalResult.finalOutput.portfolioImpactTable.map((row) => (
-                        <details key={`${row.company}-${row.held}`} className="listCard" open>
-                          <summary>
-                            <strong>{row.company}</strong>
-                            <span className="summaryPill">{row.exposureType}</span>
-                            <span className="summaryPill">{row.held}</span>
-                            <span className="summaryPill">{row.confidence}</span>
-                          </summary>
-                          <div className="metaRow">
-                            <span>{row.whatChangesToday}</span>
-                          </div>
-                          <div className="metaRow">
-                            <span>다음 확인: {row.whatToMonitor}</span>
-                          </div>
-                          {(() => {
-                            const raw = row as unknown as Record<string, unknown>;
-                            const indicators = (row.monitoringIndicators ?? raw.monitoring_indicators ?? []) as Array<Record<string, string>>;
-                            return indicators.length > 0 ? (
-                              <details style={{ marginTop: 4 }}>
-                                <summary className="metaRow" style={{ cursor: "pointer" }}>
-                                  <span>모니터링 지표 ({indicators.length})</span>
-                                </summary>
-                                {indicators.map((ind, i) => (
-                                  <div key={`ind-${i}`} className="metaRow" style={{ paddingLeft: 12 }}>
-                                    <span>
-                                      {ind.indicator ?? ind.indicator}: {ind.threshold ?? ind.threshold}
-                                      {ind.data_source || ind.dataSource ? ` — ${ind.data_source ?? ind.dataSource}` : ""}
-                                      {ind.linked_hypothesis || ind.linkedHypothesis ? ` [${ind.linked_hypothesis ?? ind.linkedHypothesis}]` : ""}
-                                    </span>
-                                  </div>
-                                ))}
-                              </details>
-                            ) : null;
-                          })()}
-                        </details>
-                    ))}
-                  </div>
-                </div>
-
-                <details className="summaryBlock" open>
-                  <summary className="summaryLabel">
-                    <span>Watch Triggers ({deferredFinalResult.finalOutput.watchTriggers.length})</span>
-                    {deferredFinalResult.finalOutput && deferredFinalResult.finalOutput.watchTriggers.length > 0 ? (
-                      <span className="summaryPill">Next: {deferredFinalResult.finalOutput.watchTriggers[0].date}</span>
-                    ) : null}
-                  </summary>
-                  <div className="triggerList">
-                    {deferredFinalResult.finalOutput.watchTriggers.map((trigger) => (
-                      <div key={`${trigger.date}-${trigger.event}`} className="listCard">
-                        <strong>
-                          {trigger.date} · {trigger.event}
-                        </strong>
-                        <div>if confirmed: {trigger.ifConfirmed}</div>
-                        <div>if not: {trigger.ifNot}</div>
-                        <div>trigger: {trigger.thesisTrigger}</div>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-
-                {deferredFinalResult.finalOutput.competingHypotheses.length > 0 ? (
-                  <details className="summaryBlock" open>
-                    <summary className="summaryLabel">
-                      <span>Competing Hypotheses ({deferredFinalResult.finalOutput.competingHypotheses.length})</span>
-                      {deferredFinalResult.finalOutput.competingHypotheses.length > 0 ? (
-                        <span className="summaryPill">
-                          {deferredFinalResult.finalOutput.competingHypotheses.find(h => (h as unknown as Record<string, unknown>).current_weight === "strongest" || h.currentWeight === "strongest")?.label ?? ""}
-                        </span>
-                      ) : null}
-                    </summary>
-                    <div className="triggerList">
-                      {deferredFinalResult.finalOutput.competingHypotheses.map((h, idx) => {
-                        const raw = h as unknown as Record<string, unknown>;
-                        const evFor = h.evidenceFor ?? (raw.evidence_for as string[]) ?? [];
-                        const evAgainst = h.evidenceAgainst ?? (raw.evidence_against as string[]) ?? [];
-                        const weight = h.currentWeight ?? (raw.current_weight as string) ?? "";
-                        return (
-                          <div key={`hyp-${idx}-${h.label}`} className="listCard">
-                            <strong>{h.label}</strong>
-                            <span className={`summaryPill ${weight === "strongest" ? "summaryPillAccent" : ""}`}>
-                              {weight}
-                            </span>
-                            <div>{h.logic}</div>
-                            <div className="metaRow">
-                              <span>For: {evFor.join(", ")}</span>
-                            </div>
-                            <div className="metaRow">
-                              <span>Against: {evAgainst.join(", ")}</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                ) : null}
-
-                {deferredFinalResult.finalOutput.historicalPrecedents.length > 0 ? (
-                  <details className="summaryBlock" open>
-                    <summary className="summaryLabel">
-                      <span>Historical Precedents (Base Rate) ({deferredFinalResult.finalOutput.historicalPrecedents.length})</span>
-                    </summary>
-                    <div className="triggerList">
-                      {deferredFinalResult.finalOutput.historicalPrecedents.map((p, idx) => (
-                        <div key={`prec-${idx}-${p.pattern}`} className="listCard">
-                          <strong>{p.pattern}</strong>
-                          <div>{p.frequency} — {p.source}</div>
-                          <div>{p.relevance}</div>
-                          <div className="metaRow"><span>{p.confidence}</span></div>
-                          {p.caveat ? <div className="metaRow"><span>{p.caveat}</span></div> : null}
-                        </div>
-                      ))}
-                    </div>
-                  </details>
-                ) : null}
-
-                <details className="summaryBlock" open>
-                  <summary className="summaryLabel">
-                    <span>Why Sections ({deferredFinalResult.finalOutput.whySections.length})</span>
-                  </summary>
-                  <div className="whyList">
-                    {deferredFinalResult.finalOutput.whySections.map((section) => (
-                      <div key={section.label} className="listCard">
-                        <strong>{section.label}</strong>
-                        <div>{section.content}</div>
-                        <div className="metaRow">
-                          <span>{section.confidence}</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </details>
-
-                {deferredFinalResult.finalOutput.inconsistencies?.length > 0 ? (
-                  <details className="summaryBlock" open>
-                    <summary className="summaryLabel">
-                      <span>뭐가 이상해? ({deferredFinalResult.finalOutput.inconsistencies.length})</span>
-                    </summary>
-                    <div className="triggerList">
-                      {deferredFinalResult.finalOutput.inconsistencies.map((inc, idx) => {
-                        const raw = inc as unknown as Record<string, unknown>;
-                        return (
-                          <div key={`inc-${idx}`} className="listCard">
-                            <div className="metaRow"><span>A: {inc.claimA ?? (raw.claim_a as string) ?? ""}</span></div>
-                            <div className="metaRow"><span>B: {inc.claimB ?? (raw.claim_b as string) ?? ""}</span></div>
-                            <div><strong>{inc.tension ?? (raw.tension as string) ?? ""}</strong></div>
-                            <div className="metaRow"><span>해소 조건: {inc.whatResolvesIt ?? (raw.what_resolves_it as string) ?? ""}</span></div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                ) : null}
-
-                {deferredFinalResult.finalOutput.narrativeParallels?.length > 0 ? (
-                  <details className="summaryBlock" open>
-                    <summary className="summaryLabel">
-                      <span>이건 뭐랑 비슷해? ({deferredFinalResult.finalOutput.narrativeParallels.length})</span>
-                    </summary>
-                    <div className="triggerList">
-                      {deferredFinalResult.finalOutput.narrativeParallels.map((np, idx) => {
-                        const raw = np as unknown as Record<string, unknown>;
-                        return (
-                          <div key={`np-${idx}`} className="listCard">
-                            <strong>{np.episode ?? (raw.episode as string) ?? ""}</strong>
-                            <div className="metaRow"><span>공통: {np.commonStructure ?? (raw.common_structure as string) ?? ""}</span></div>
-                            <div className="metaRow"><span>차이: {np.keyDifference ?? (raw.key_difference as string) ?? ""}</span></div>
-                            <div>{np.howItPlayedOut ?? (raw.how_it_played_out as string) ?? ""}</div>
-                            <div className="metaRow"><span>이번에 다를 수 있는 이유: {np.whyThisTimeMayDiffer ?? (raw.why_this_time_may_differ as string) ?? ""}</span></div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                ) : null}
-
-                {deferredFinalResult.finalOutput.metaAssumptions?.length > 0 ? (
-                  <details className="summaryBlock" open>
-                    <summary className="summaryLabel">
-                      <span>이 분석의 숨은 전제 ({deferredFinalResult.finalOutput.metaAssumptions.length})</span>
-                    </summary>
-                    <div className="triggerList">
-                      {deferredFinalResult.finalOutput.metaAssumptions.map((ma, idx) => {
-                        const raw = ma as unknown as Record<string, unknown>;
-                        return (
-                          <div key={`ma-${idx}`} className="listCard">
-                            <strong>{ma.assumption ?? (raw.assumption as string) ?? ""}</strong>
-                            <div className="metaRow"><span>틀리면: {ma.ifWrong ?? (raw.if_wrong as string) ?? ""}</span></div>
-                            <div className="metaRow"><span>확인: {ma.check ?? (raw.check as string) ?? ""}</span></div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </details>
-                ) : null}
-
-                <details className="summaryBlock" open>
-                  <summary className="summaryLabel">
-                    <span>Premortem</span>
-                    {deferredFinalResult.finalOutput.premortem.coreThesis ? (
-                      <span className="summaryPill">{deferredFinalResult.finalOutput.premortem.coreThesis}</span>
-                    ) : null}
-                  </summary>
-                  <div>{deferredFinalResult.finalOutput.premortem.primaryFailure}</div>
-                  <div>{deferredFinalResult.finalOutput.premortem.earlyWarning}</div>
-                  <div>{deferredFinalResult.finalOutput.premortem.ifWrong}</div>
-                </details>
-
-                <div className="summaryBlock markdownBlock">
-                  <span className="summaryLabel">Markdown Output</span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                    <label>
-                      <span className="fieldLabel" style={{ marginRight: 4 }}>템플릿:</span>
-                      <select
-                        className="selectInput"
-                        value={outputTemplate}
-                        onChange={(e) => setOutputTemplate(e.target.value as "full" | "summary" | "social")}
-                        style={{ width: "auto" }}
-                      >
-                        <option value="full">Full Report</option>
-                        <option value="summary">Executive Summary</option>
-                        <option value="social">Social Post</option>
-                      </select>
-                    </label>
-                    <span className="hintText">현재 템플릿: {outputTemplate === "full" ? "Full Report" : outputTemplate === "summary" ? "Executive Summary" : "Social Post"}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-                    <button
-                      type="button"
-                      className="miniButton"
-                      onClick={handleCopy}
-                    >
-                      📋 현재 템플릿 복사
-                    </button>
-                    {copyFeedback && <span style={{ marginLeft: 8, color: "var(--text-color-light)" }}>{copyFeedback}</span>}
-                  </div>
-                  <textarea
-                    className="codeBlock"
-                    value={editableMarkdown}
-                    onChange={(e) => setEditableMarkdown(e.target.value)}
-                    rows={20}
-                    style={{ width: "100%", fontFamily: "monospace" }}
-                  />
-                  <div style={{ marginTop: 16 }}>
-                    <span className="summaryLabel">내 메모</span>
-                    <textarea
-                      placeholder="이 분석에 대한 메모를 남겨보세요..."
-                      className="codeBlock"
-                      value={userNotes}
-                      onChange={(e) => setUserNotes(e.target.value)}
-                      rows={4}
-                      style={{ width: "100%", fontFamily: "monospace" }}
-                    />
-                  </div>
-                </div>
-
-                {abComparison && abStage ? (
-                  <div className="summaryBlock markdownBlock">
-                    <span className="summaryLabel">A/B Comparison</span>
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                      <div>
-                        <span className="summaryLabel">A (Current)</span>
-                        {renderComparedMarkdown(abComparison.markdownA, abComparison.markdownB, "a")}
-                      </div>
-                      <div>
-                        <span className="summaryLabel">B (Modified: {STAGE_LABELS[abStage]})</span>
-                        {renderComparedMarkdown(abComparison.markdownB, abComparison.markdownA, "b")}
-                      </div>
-                    </div>
-                    <div className="triggerList" style={{ marginTop: 16 }}>
-                      <div className="listCard">
-                        <div className="metaRow">
-                          <strong>Character Count</strong>
-                        </div>
-                        <div>{`A: ${abComparison.charCountA.toLocaleString()} / B: ${abComparison.charCountB.toLocaleString()}`}</div>
-                      </div>
-                      <div className="listCard">
-                        <div className="metaRow">
-                          <strong>Sections only in A</strong>
-                        </div>
-                        <div>{abComparison.onlyInA.length > 0 ? abComparison.onlyInA.join(", ") : "None"}</div>
-                      </div>
-                      <div className="listCard">
-                        <div className="metaRow">
-                          <strong>Sections only in B</strong>
-                        </div>
-                        <div>{abComparison.onlyInB.length > 0 ? abComparison.onlyInB.join(", ") : "None"}</div>
-                      </div>
-                      <div className="listCard">
-                        <div className="metaRow">
-                          <strong>oneLineTake</strong>
-                        </div>
-                        <div>{`A: ${abComparison.oneLineTakeA}`}</div>
-                        <div>{`B: ${abComparison.oneLineTakeB}`}</div>
-                      </div>
-                    </div>
-                  </div>
-                ) : null}
+                <OutputEditor
+                  editableMarkdown={editableMarkdown}
+                  setEditableMarkdown={setEditableMarkdown}
+                  userNotes={userNotes}
+                  setUserNotes={setUserNotes}
+                  outputTemplate={outputTemplate}
+                  setOutputTemplate={setOutputTemplate}
+                  handleCopy={handleCopy}
+                  copyFeedback={copyFeedback}
+                />
               </div>
             ) : (
-              <div className="panelLead">
-                결과가 아직 없습니다. 샘플을 선택하고 실행하면 이 영역에 최종 구조화 출력이 표시됩니다.
-              </div>
+              <div className="panelLead">결과가 아직 없습니다. 샘플을 선택하고 실행하면 이 영역에 최종 구조화 출력이 표시됩니다.</div>
             )}
           </section>
 
           <section className="resultCard">
-            <button
-              type="button"
-              className="resultHeader resultHeaderToggle"
-              onClick={() => setInputSnapshotOpen((prev) => !prev)}
-              aria-expanded={inputSnapshotOpen}
-            >
+            <button type="button" className="resultHeader resultHeaderToggle" onClick={() => setInputSnapshotOpen((prev) => !prev)} aria-expanded={inputSnapshotOpen}>
               <h2 className="resultTitle">Current Input Snapshot</h2>
-              <span className="statusBadge status-running">
-                {inputSnapshotOpen ? "▲ Collapse" : "▶ Debug"}
-              </span>
+              <span className="statusBadge status-running">{inputSnapshotOpen ? "▲ Collapse" : "▶ Debug"}</span>
             </button>
-            {inputSnapshotOpen ? (
-              <pre className="codeBlock">{deferredRawJson}</pre>
-            ) : null}
+            {inputSnapshotOpen ? <pre className="codeBlock">{deferredRawJson}</pre> : null}
           </section>
         </div>
 
         <section className="resultCard">
-          <details className="resultHeader resultHeaderToggle" open={false}>
-            <summary
-              className="resultHeader resultHeaderToggle"
-              style={{ cursor: "pointer" }}
-            >
-              <h2 className="resultTitle">분석 이력</h2>
-              <span className="statusBadge status-running">
-                {analysisHistory.length} saved
-              </span>
-            </summary>
-            <div className="stack" style={{ paddingTop: 16 }}>
-              {analysisHistory.length === 0 ? (
-                <p className="panelLead">저장된 분석이 없습니다.</p>
-              ) : (
-                analysisHistory.map((analysis) => (
-                  <div key={analysis.eventId} className="listCard">
-                    <div className="metaRow">
-                      <strong>{formatStoredDate(analysis.timestamp)}</strong>
-                      <span>{analysis.eventId}</span>
-                      <span className={`statusBadge ${analysis.output.mode === "personalized" ? "status-running" : "status-success"}`}>
-                        {analysis.output.mode === "personalized" ? "Personalized" : "General"}
-                      </span>
-                      <button
-                        type="button"
-                        className="miniButton"
-                        onClick={() => loadAnalysis(analysis)}
-                      >
-                        불러오기
-                      </button>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </details>
+          <AnalysisHistory history={analysisHistory} historySearch={historySearch} setHistorySearch={setHistorySearch} onLoad={loadAnalysis} title="분석 이력" />
         </section>
       </section>
     </main>

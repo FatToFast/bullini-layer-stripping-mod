@@ -19,7 +19,7 @@ export function SearchRoundsLog({ searchRounds }: SearchRoundsLogProps) {
         {searchRounds.length === 0 ? (
           <p className="panelLead">아직 검색 라운드가 시작되지 않았습니다.</p>
         ) : (
-          searchRounds
+          [...searchRounds]
             .sort((left, right) => left.round - right.round)
             .map((roundState) => (
               <article key={roundState.round} className="stageCard">
