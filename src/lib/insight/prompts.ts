@@ -319,6 +319,16 @@ Premortem 규칙:
 - "~할 수 있다" 나열 금지. 구체적 시나리오 + 조기 경고 + 틀리면 바뀌는 것.
 - 조기 경고 신호가 없으면 모니터링 불가능 → 쓸모없다.
 
+목표 C — Meta Assumptions (분석의 숨은 전제):
+이 분석이 서 있는 전제를 명시하라. 전문가가 후배에게 "네 분석은 좋은데, 이 전제가 틀리면 전부 무너져"라고 말하는 것.
+
+meta_assumptions 규칙:
+- 1~3개 전제를 추출하라.
+- 각 전제에 "if_wrong"(틀리면 어떻게 되는지)과 "check"(확인 방법)을 붙여라.
+- 당연한 전제는 빼라 ("시장이 존재한다" 같은 것).
+- 분석 전체를 뒤집을 수 있는 전제만 포함하라.
+- "~할 수 있다" 나열 금지. 구체적 전제 + 구체적 결과.
+
 출력 스키마:
 {
   "structural_read": "temporary_shock | persistent_shift | structural_break",
@@ -329,7 +339,14 @@ Premortem 규칙:
     "primary_failure": "가장 가능성 높은 실패 시나리오",
     "early_warning": "조기 경고 신호",
     "if_wrong": "틀리면 바뀌는 것"
-  }
+  },
+  "meta_assumptions": [
+    {
+      "assumption": "이 분석이 전제하는 것",
+      "if_wrong": "이 전제가 틀리면 분석에서 바뀌는 것",
+      "check": "이 전제를 확인할 수 있는 데이터/이벤트"
+    }
+  ]
 }`;
 
 
@@ -365,6 +382,24 @@ export const STEP8_PROMPT = `역할:
     }
   ],
   "evidence_gaps": ["아직 확인 못 한 중요 정보 목록"],
+  "inconsistencies": [
+    {
+      "claim_a": "주장/데이터 A",
+      "claim_b": "주장/데이터 B (A와 상충)",
+      "tension": "왜 이 둘이 동시에 성립하기 어려운가",
+      "what_resolves_it": "어떤 데이터가 나오면 해소되는가"
+    }
+  ],
+  "narrative_parallels": [
+    {
+      "episode": "유사 에피소드 이름 (예: 2018년 미중 301조 1단계)",
+      "common_structure": "구조적 공통점 (예: USTR 주도 다품목 조사, 의견접수→확정 프로세스)",
+      "key_difference": "핵심 차이점 (예: 당시 중국 단일 대상 vs 이번 6개국 동시)",
+      "how_it_played_out": "당시 전개와 결과 (예: 4개월 내 25% 확정, 시장 -12% 후 6개월 회복)",
+      "why_this_time_may_differ": "이번에 다를 수 있는 구조적 이유",
+      "source": "출처"
+    }
+  ],
   "historical_precedents": [
     {
       "pattern": "비교 가능한 과거 사례 패턴 (예: 301조 관세 발동 후 한국 수출 변화)",
@@ -376,6 +411,21 @@ export const STEP8_PROMPT = `역할:
     }
   ]
 }
+
+inconsistencies 규칙:
+- 입력 데이터, 검색 결과, 이전 스테이지 출력에서 서로 상충하는 주장/숫자를 찾아라.
+- 모순이 없으면 빈 배열 []. 억지로 만들지 마라.
+- claim_a와 claim_b는 구체적으로 인용하라. "~와 ~가 상충" 같은 모호한 표현 금지.
+- what_resolves_it은 어떤 데이터/이벤트가 나오면 모순이 해소되는지 명시하라.
+- 같은 소스 내의 모순(한 사람이 앞뒤가 다른 말), 다른 소스 간 모순 모두 포함.
+
+narrative_parallels 규칙:
+- 빈도가 아니라 이야기다. "3건 중 2건"이 아니라 "2018년에 이런 일이 있었고 이렇게 전개됐다".
+- 검색 결과에서 유사 에피소드를 찾았을 때만 포함. 없으면 빈 배열 [].
+- common_structure에서 표면적 유사성("둘 다 관세")이 아니라 구조적 유사성("USTR 주도, 다품목, 의견접수 프로세스")을 찾아라.
+- key_difference와 why_this_time_may_differ가 핵심이다. 유사하다고만 하면 쓸모없다.
+- how_it_played_out은 결과를 구체적으로 (수치, 기간) 써라. "영향이 있었다" 금지.
+- 에피소드를 지어내지 마라. 검색 결과에 없는 사례는 포함하지 마라.
 
 historical_precedents 규칙:
 - 검색 결과나 입력 데이터에서 유사 사례를 찾아라. 없으면 빈 배열 [].
@@ -400,8 +450,8 @@ export const STEP9_PROMPT = `역할:
 입력:
 - Step 5 결과 (portfolio_impact + mode)
 - Step 6 결과 (time_horizon)
-- Step 7 결과 (structural_read + premortem)
-- Step 8 결과 (verified facts + historical_precedents)
+- Step 7 결과 (structural_read + premortem + meta_assumptions)
+- Step 8 결과 (verified facts + historical_precedents + inconsistencies + narrative_parallels)
 - Step 1 결과 (consensus + why_incomplete + competing_hypotheses)
 - Step 3 결과 (reverse_paths)
 - Step 4 결과 (spillover_paths)
@@ -427,9 +477,12 @@ Personalized Mode markdown 구조:
 
   (watchlist 종목은 간략하게)
   
-  ### 경쟁 해석
-  ### 과거 사례 (있을 경우)
-  ### Premortem
+   ### 경쟁 해석
+   ### 뭐가 이상해? (inconsistencies, 있을 경우)
+   ### 이건 뭐랑 비슷해? (narrative_parallels, 있을 경우)
+   ### 과거 사례 (있을 경우)
+   ### 이 분석의 숨은 전제 (meta_assumptions)
+   ### Premortem
 
 == General Mode ==
 
@@ -448,9 +501,12 @@ General Mode markdown 구조:
   ### 핵심 불확실성
   (watch_triggers 기반, if/then 구조)
   
-  ### 경쟁 해석
-  ### 과거 사례 (있을 경우)
-  ### 구조 판정 + Premortem
+   ### 경쟁 해석
+   ### 뭐가 이상해? (있을 경우)
+   ### 이건 뭐랑 비슷해? (있을 경우)
+   ### 과거 사례 (있을 경우)
+   ### 이 분석의 숨은 전제
+   ### 구조 판정 + Premortem
   
   ---
   📌 보유 종목을 추가하면 맞춤 분석을 받을 수 있습니다.
@@ -464,6 +520,9 @@ General Mode markdown 구조:
 - "~에 주목할 필요가 있다" 같은 회피 표현 금지
 - what_to_monitor는 투자 행동이 아닌 "다음 확인할 데이터"
 - historical_precedents가 빈 배열이면 markdown_output에서 해당 섹션을 생략하라 (JSON에는 빈 배열 유지)
+- inconsistencies가 빈 배열이면 markdown_output에서 해당 섹션을 생략하라 (JSON에는 빈 배열 유지)
+- narrative_parallels가 빈 배열이면 markdown_output에서 해당 섹션을 생략하라 (JSON에는 빈 배열 유지)
+- meta_assumptions는 항상 1개 이상 포함하라 (분석에 전제가 없을 수 없다)
 - competing_hypotheses에서 strongest 가설을 명확히 표시하되, 다른 가설도 논리와 근거를 충실히 서술하라
 
 출력 스키마:
@@ -513,6 +572,31 @@ General Mode markdown 구조:
       "relevance": "",
       "confidence": "confirmed | estimated | scenario",
       "caveat": ""
+    }
+  ],
+  "inconsistencies": [
+    {
+      "claim_a": "",
+      "claim_b": "",
+      "tension": "",
+      "what_resolves_it": ""
+    }
+  ],
+  "narrative_parallels": [
+    {
+      "episode": "",
+      "common_structure": "",
+      "key_difference": "",
+      "how_it_played_out": "",
+      "why_this_time_may_differ": "",
+      "source": ""
+    }
+  ],
+  "meta_assumptions": [
+    {
+      "assumption": "",
+      "if_wrong": "",
+      "check": ""
     }
   ],
   "structural_read": "",
