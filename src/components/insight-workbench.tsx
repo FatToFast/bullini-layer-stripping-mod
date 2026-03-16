@@ -1868,6 +1868,69 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   </div>
                 </details>
 
+                {deferredFinalResult.finalOutput.inconsistencies?.length > 0 ? (
+                  <details className="summaryBlock">
+                    <summary className="summaryLabel">
+                      <span>뭐가 이상해? ({deferredFinalResult.finalOutput.inconsistencies.length})</span>
+                    </summary>
+                    <div className="triggerList">
+                      {deferredFinalResult.finalOutput.inconsistencies.map((inc, idx) => {
+                        const raw = inc as unknown as Record<string, unknown>;
+                        return (
+                          <div key={`inc-${idx}`} className="listCard">
+                            <div className="metaRow"><span>A: {inc.claimA ?? (raw.claim_a as string) ?? ""}</span></div>
+                            <div className="metaRow"><span>B: {inc.claimB ?? (raw.claim_b as string) ?? ""}</span></div>
+                            <div><strong>{inc.tension ?? (raw.tension as string) ?? ""}</strong></div>
+                            <div className="metaRow"><span>해소 조건: {inc.whatResolvesIt ?? (raw.what_resolves_it as string) ?? ""}</span></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                ) : null}
+
+                {deferredFinalResult.finalOutput.narrativeParallels?.length > 0 ? (
+                  <details className="summaryBlock">
+                    <summary className="summaryLabel">
+                      <span>이건 뭐랑 비슷해? ({deferredFinalResult.finalOutput.narrativeParallels.length})</span>
+                    </summary>
+                    <div className="triggerList">
+                      {deferredFinalResult.finalOutput.narrativeParallels.map((np, idx) => {
+                        const raw = np as unknown as Record<string, unknown>;
+                        return (
+                          <div key={`np-${idx}`} className="listCard">
+                            <strong>{np.episode ?? (raw.episode as string) ?? ""}</strong>
+                            <div className="metaRow"><span>공통: {np.commonStructure ?? (raw.common_structure as string) ?? ""}</span></div>
+                            <div className="metaRow"><span>차이: {np.keyDifference ?? (raw.key_difference as string) ?? ""}</span></div>
+                            <div>{np.howItPlayedOut ?? (raw.how_it_played_out as string) ?? ""}</div>
+                            <div className="metaRow"><span>이번에 다를 수 있는 이유: {np.whyThisTimeMayDiffer ?? (raw.why_this_time_may_differ as string) ?? ""}</span></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                ) : null}
+
+                {deferredFinalResult.finalOutput.metaAssumptions?.length > 0 ? (
+                  <details className="summaryBlock">
+                    <summary className="summaryLabel">
+                      <span>이 분석의 숨은 전제 ({deferredFinalResult.finalOutput.metaAssumptions.length})</span>
+                    </summary>
+                    <div className="triggerList">
+                      {deferredFinalResult.finalOutput.metaAssumptions.map((ma, idx) => {
+                        const raw = ma as unknown as Record<string, unknown>;
+                        return (
+                          <div key={`ma-${idx}`} className="listCard">
+                            <strong>{ma.assumption ?? (raw.assumption as string) ?? ""}</strong>
+                            <div className="metaRow"><span>틀리면: {ma.ifWrong ?? (raw.if_wrong as string) ?? ""}</span></div>
+                            <div className="metaRow"><span>확인: {ma.check ?? (raw.check as string) ?? ""}</span></div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                ) : null}
+
                 <details className="summaryBlock">
                   <summary className="summaryLabel">
                     <span>Premortem</span>
