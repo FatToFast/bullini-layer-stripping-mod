@@ -1,0 +1,155 @@
+name: Prompt Quality Gate
+
+on:
+  pull_request:
+    paths:
+      - 'src/lib/insight/prompts.ts'
+      - 'src/lib/insight/types.ts'
+      - 'src/lib/insight/pipeline.ts'
+
+jobs:
+  typecheck:
+    name: TypeScript Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+
+  build:
+    name: Build Check
+    runs-on: ubuntu-latest
+    needs: typecheck
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+  schema-validation:
+    name: Schema Field Consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check prompt schema fields match TypeScript types
+        run: |
+          echo "=== Checking field consistency ==="
+
+          # Extract snake_case fields from Step 9 prompt schema
+          PROMPT_FIELDS=$(grep -oP '"[a-z_]+"(?=\s*:)' src/lib/insight/prompts.ts | sort -u)
+
+          # Check critical fields exist in types.ts (camelCase equivalents)
+          REQUIRED_TYPES=("mode" "portfolioImpactTable" "watchTriggers" "competingHypotheses" "whySections" "historicalPrecedents" "structuralRead" "premortem" "oneLineTake" "markdownOutput")
+
+          MISSING=0
+          for field in "${REQUIRED_TYPES[@]}"; do
+            if ! grep -q "$field" src/lib/insight/types.ts; then
+              echo "MISSING in types.ts: $field"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+
+          # Check pipeline.ts maps all FinalOutput fields
+          REQUIRED_MAPPINGS=("one_line_take" "portfolio_impact_table" "watch_triggers" "competing_hypotheses" "why_sections" "historical_precedents" "structural_read" "premortem" "markdown_output" "mode")
+
+          for field in "${REQUIRED_MAPPINGS[@]}"; do
+            if ! grep -q "$field" src/lib/insight/pipeline.ts; then
+              echo "MISSING mapping in pipeline.ts: $field"
+              MISSING=$((MISSING + 1))
+            fi
+          done
+
+          if [ $MISSING -gt 0 ]; then
+            echo "FAIL: $MISSING field(s) missing"
+            exit 1
+          fi
+
+          echo "PASS: All fields consistent"
+
+  regulatory-check:
+    name: Regulatory Compliance Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for investment advice language in prompts
+        run: |
+          echo "=== Checking for forbidden advisory language ==="
+
+          # These patterns should NOT appear in output schemas or examples marked as OK
+          FORBIDDEN_PATTERNS=(
+            '"매수"'
+            '"매도"'
+            '"비중 축소"'
+            '"비중 확대"'
+            '"적극 매수"'
+            '"손절"'
+          )
+
+          VIOLATIONS=0
+          for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
+            # Check in prompts.ts output schemas and OK examples
+            MATCHES=$(grep -n "$pattern" src/lib/insight/prompts.ts | grep -v "예시 X" | grep -v "금지" || true)
+            if [ -n "$MATCHES" ]; then
+              echo "VIOLATION: $pattern found in prompts.ts (not in forbidden example)"
+              echo "$MATCHES"
+              VIOLATIONS=$((VIOLATIONS + 1))
+            fi
+          done
+
+          # Check formatter.ts for advisory language
+          for pattern in "${FORBIDDEN_PATTERNS[@]}"; do
+            if grep -q "$pattern" src/lib/insight/formatter.ts; then
+              echo "VIOLATION: $pattern found in formatter.ts"
+              VIOLATIONS=$((VIOLATIONS + 1))
+            fi
+          done
+
+          if [ $VIOLATIONS -gt 0 ]; then
+            echo "FAIL: $VIOLATIONS regulatory violation(s)"
+            exit 1
+          fi
+
+          echo "PASS: No advisory language detected"
+
+  prompt-diff-summary:
+    name: Prompt Change Summary
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Generate prompt diff summary
+        run: |
+          echo "## Prompt Changes" > /tmp/summary.md
+          echo "" >> /tmp/summary.md
+
+          if git diff origin/main -- src/lib/insight/prompts.ts | head -200 > /dev/null 2>&1; then
+            # Count which steps changed
+            CHANGED_STEPS=$(git diff origin/main -- src/lib/insight/prompts.ts | grep "^+" | grep -oP "STEP\d+" | sort -u)
+            echo "**Changed steps:** $CHANGED_STEPS" >> /tmp/summary.md
+            echo "" >> /tmp/summary.md
+
+            # Show line count changes
+            ADDITIONS=$(git diff origin/main -- src/lib/insight/prompts.ts | grep "^+" | grep -v "^+++" | wc -l)
+            DELETIONS=$(git diff origin/main -- src/lib/insight/prompts.ts | grep "^-" | grep -v "^---" | wc -l)
+            echo "**Lines:** +$ADDITIONS / -$DELETIONS" >> /tmp/summary.md
+          else
+            echo "No prompt changes detected." >> /tmp/summary.md
+          fi
+
+          cat /tmp/summary.md
+
+          # Post as PR comment if gh is available
+          if command -v gh &> /dev/null; then
+            gh pr comment ${{ github.event.pull_request.number }} --body-file /tmp/summary.md || true
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
