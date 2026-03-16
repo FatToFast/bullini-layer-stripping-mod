@@ -7,7 +7,7 @@ export type SearchFact = {
   publishedAt?: string;
 };
 
-export type SearchProviderKind = "noop" | "duckduckgo" | "tavily" | "naver" | "perplexity";
+export type SearchProviderKind = "noop" | "duckduckgo" | "tavily" | "naver" | "perplexity" | "haystack";
 
 export type SearchProvider = {
   kind: SearchProviderKind;
@@ -72,7 +72,7 @@ function flattenTopics(topics: DuckDuckGoTopic[]): DuckDuckGoTopic[] {
 
 export function getSearchProvider(kind?: SearchProviderKind): SearchProvider {
   const resolved = kind ?? (process.env.SEARCH_PROVIDER || "noop").toLowerCase();
-  if (resolved === "tavily" || resolved === "duckduckgo" || resolved === "naver" || resolved === "perplexity") {
+  if (resolved === "tavily" || resolved === "duckduckgo" || resolved === "naver" || resolved === "perplexity" || resolved === "haystack") {
     return { kind: resolved as SearchProviderKind };
   }
   return { kind: "noop" };
@@ -85,6 +85,7 @@ export function getAvailableProviders(): AvailableSearchProvider[] {
     { kind: "naver", label: "Naver News", configured: !!(process.env.NAVER_CLIENT_ID && process.env.NAVER_CLIENT_SECRET) },
     { kind: "duckduckgo", label: "DuckDuckGo", configured: true },
     { kind: "perplexity", label: "Perplexity Sonar", configured: !!(process.env.PERPLEXITY_API_KEY || process.env.OPENROUTER_API_KEY) },
+    { kind: "haystack", label: "Haystack (Web+RAG)", configured: !!process.env.HAYSTACK_URL },
   ];
 }
 
@@ -281,6 +282,48 @@ async function searchPerplexity(query: string): Promise<SearchFact[]> {
   return [];
 }
 
+type HaystackSearchResult = {
+  query: string;
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+  publishedAt?: string;
+};
+
+type HaystackSearchResponse = {
+  results: HaystackSearchResult[];
+};
+
+async function searchHaystack(query: string): Promise<SearchFact[]> {
+  const baseURL = process.env.HAYSTACK_URL;
+  if (!baseURL) throw new Error("HAYSTACK_URL is not set");
+
+  const mode = process.env.HAYSTACK_MODE || "hybrid";
+
+  const response = await fetch(`${baseURL}/search`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, mode, top_k: 8 }),
+  });
+
+  if (!response.ok) {
+    const errorBody = await response.text().catch(() => "");
+    throw new Error(`Haystack search failed (${response.status}): ${errorBody.slice(0, 200)}`);
+  }
+
+  const data = (await response.json()) as HaystackSearchResponse;
+
+  return (data.results ?? []).map((item) => ({
+    query,
+    title: item.title,
+    url: item.url,
+    snippet: item.snippet,
+    source: item.source || "Haystack",
+    publishedAt: item.publishedAt,
+  }));
+}
+
 export async function searchWithRetry(provider: SearchProvider, query: string, retries = 1): Promise<SearchFact[]> {
   if (provider.kind === "noop") {
     return [];
@@ -292,7 +335,9 @@ export async function searchWithRetry(provider: SearchProvider, query: string, r
       ? searchNaverNews
       : provider.kind === "perplexity"
         ? searchPerplexity
-        : searchDuckDuckGo;
+        : provider.kind === "haystack"
+          ? searchHaystack
+          : searchDuckDuckGo;
 
   let lastError: unknown;
 
