@@ -87,6 +87,11 @@ const DEFAULT_TEMPERATURE = 0.2;
 const DEFAULT_MAX_TOKENS = 1800;
 const OUTPUT_STAGE_TOKENS = 4000;
 const ANALYSIS_STORAGE_PREFIX = "bullini-analysis-";
+const PRESETS = {
+  deep: { temperature: 0.3, maxTokens: 8192, label: "Deep" },
+  balanced: { temperature: 0.5, maxTokens: 4096, label: "Balanced" },
+  quick: { temperature: 0.7, maxTokens: 2048, label: "Quick" },
+} as const;
 const MODEL_NOTE_LOOKUP = new Map(
   MODEL_GROUPS.flatMap((group) => group.options.map((option) => [option.value, option.note] as const))
 );
@@ -239,6 +244,16 @@ function getWatchTriggerLabel(trigger: FinalOutput["watchTriggers"][number]) {
   return `${trigger.date} - ${trigger.event}`;
 }
 
+function getMetricStyle(level: "good" | "bad" | "neutral") {
+  if (level === "good") {
+    return { backgroundColor: "#dcfce7", color: "#15803d" };
+  }
+  if (level === "bad") {
+    return { backgroundColor: "#fee2e2", color: "#ef4444" };
+  }
+  return {};
+}
+
 function buildInitialStageConfigs(
   defaultModel: string,
   defaultTemperature = DEFAULT_TEMPERATURE,
@@ -276,6 +291,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const [commonCustomModel, setCommonCustomModel] = useState(isKnownModel(defaultModel) ? "" : defaultModel);
   const [commonTemperature, setCommonTemperature] = useState(DEFAULT_TEMPERATURE);
   const [commonMaxTokens, setCommonMaxTokens] = useState(DEFAULT_MAX_TOKENS);
+  const [preset, setPreset] = useState<"custom" | "deep" | "balanced" | "quick">("custom");
   const [systemPrompt, setSystemPrompt] = useState(defaultSystemPrompt);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const [stageConfigs, setStageConfigs] = useState<Record<InsightStageName, StageUiConfig>>(
@@ -488,6 +504,23 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     if (value !== CUSTOM_MODEL_VALUE) {
       setCommonCustomModel("");
     }
+  }
+
+  function handlePresetChange(nextPreset: "custom" | "deep" | "balanced" | "quick") {
+    setPreset(nextPreset);
+    if (nextPreset === "custom") return;
+    setCommonTemperature(PRESETS[nextPreset].temperature);
+    setCommonMaxTokens(PRESETS[nextPreset].maxTokens);
+  }
+
+  function handleCommonTemperatureChange(value: number) {
+    setCommonTemperature(value);
+    setPreset("custom");
+  }
+
+  function handleCommonMaxTokensChange(value: number) {
+    setCommonMaxTokens(value);
+    setPreset("custom");
   }
 
   function updateStageConfig(stage: InsightStageName, updater: (current: StageUiConfig) => StageUiConfig) {
@@ -743,7 +776,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
     try {
       const resultA = await runFullPipeline(buildModelSettings());
-      const variantStageConfigs = {
+      const variantConfigs = {
         ...stageConfigs,
         [abStage]: {
           ...stageConfigs[abStage],
@@ -752,19 +785,13 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         },
       };
 
-      setStageConfigs(variantStageConfigs);
-
-      try {
-        const resultB = await runFullPipeline(buildModelSettings(variantStageConfigs), {
-          applyFinalResult: false,
-          persistResult: false,
-          updatePreviousResult: false,
-        });
-        setAbResult(resultB);
-        setFinalResult(resultA);
-      } finally {
-        setStageConfigs(stageConfigs);
-      }
+      const resultB = await runFullPipeline(buildModelSettings(variantConfigs), {
+        applyFinalResult: false,
+        persistResult: false,
+        updatePreviousResult: false,
+      });
+      setAbResult(resultB);
+      setFinalResult(resultA);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "A/B 비교 실행에 실패했습니다.");
     } finally {
@@ -918,6 +945,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
     const markdownOutput = output.markdownOutput || "";
     const charCount = markdownOutput.length;
+    const normalizedCharCount = Math.max(charCount, 1);
 
     const sectionCount =
       output.portfolioImpactTable.length +
@@ -941,6 +969,42 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       return sum + (indicators?.length || 0);
     }, 0);
 
+    const numericMatches = markdownOutput.match(/\d+[\d,.]*(%|원|달러|조|억|만|건|개|명)?/g) ?? [];
+    const numericDensity = (numericMatches.length / normalizedCharCount) * 1000;
+
+    const causalMatches = markdownOutput.match(/→|때문에|결과적으로|따라서|이로 인해|이에 따라|영향으로/g) ?? [];
+    const causalChainDepth = causalMatches.length;
+
+    const evidenceRecord = stageRecords.find((record) => record.stage === "evidence_consolidation");
+    const evidenceOutput = evidenceRecord?.output;
+    const evidenceRaw = evidenceOutput && typeof evidenceOutput === "object"
+      ? (evidenceOutput as Record<string, unknown>)
+      : null;
+    const factsCandidate = [evidenceRaw?.facts, evidenceRaw?.verifiedFacts, evidenceRaw?.factEntries].find(Array.isArray) as
+      | Array<Record<string, unknown>>
+      | undefined;
+    const verifiedSources = new Set(
+      (factsCandidate ?? [])
+        .filter((item) => item?.status === "verified")
+        .map((item) => String(item.source ?? "").trim())
+        .filter(Boolean)
+    );
+    const urlSources = markdownOutput.match(/https?:\/\/[^\s)]+/g) ?? [];
+    const namedSources = Array.from(
+      markdownOutput.matchAll(/(?:출처|source)\s*[:：]\s*([^\n,;]+)/gi),
+      (match) => match[1].trim()
+    ).filter(Boolean);
+    const sourceCount = new Set([...verifiedSources, ...urlSources, ...namedSources]).size;
+
+    const temporalMatches = markdownOutput.match(/\d{1,2}\/\d{1,2}|\d{4}년|\d{1,2}월|\dQ\d|분기|반기/g) ?? [];
+    const temporalSpecificity = temporalMatches.length;
+
+    const counterargumentText = [
+      ...(output.inconsistencies ?? []).map((item) => JSON.stringify(item)),
+      ...(output.narrativeParallels ?? []).map((item) => JSON.stringify(item)),
+    ].join(" ");
+    const counterargumentQuality = /\d/.test(counterargumentText);
+
     return {
       charCount,
       sectionCount,
@@ -948,8 +1012,13 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       advisoryCheck,
       hypothesisCount,
       indicatorCount,
+      numericDensity,
+      causalChainDepth,
+      sourceCount,
+      temporalSpecificity,
+      counterargumentQuality,
     };
-  }, [deferredFinalResult]);
+  }, [deferredFinalResult, stageRecords]);
 
   return (
     <main className="shell">
@@ -1098,6 +1167,26 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
           </div>
 
           <div className="configCard">
+            <div className="promptLabelRow" style={{ marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
+              <span className="fieldLabel">Parameter Preset</span>
+              {(["deep", "balanced", "quick", "custom"] as const).map((presetOption) => (
+                <button
+                  key={presetOption}
+                  type="button"
+                  className={`miniButton ${preset === presetOption ? "summaryPillAccent" : ""}`}
+                  onClick={() => handlePresetChange(presetOption)}
+                >
+                  {presetOption === "custom" ? "Custom" : PRESETS[presetOption].label}
+                </button>
+              ))}
+            </div>
+
+            {preset !== "custom" ? (
+              <div className="hintText" style={{ marginBottom: 12 }}>
+                {`Preset: ${PRESETS[preset].label} (temp ${PRESETS[preset].temperature}, tokens ${PRESETS[preset].maxTokens})`}
+              </div>
+            ) : null}
+
             <div className="profileGrid">
               <label className="fieldShell">
                 <span className="fieldLabel">Common Model</span>
@@ -1128,7 +1217,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                     max="1.5"
                     step="0.1"
                     value={commonTemperature}
-                    onChange={(event) => setCommonTemperature(Number(event.target.value))}
+                    onChange={(event) => handleCommonTemperatureChange(Number(event.target.value))}
                   />
                   <input
                     type="number"
@@ -1137,7 +1226,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                     step="0.1"
                     className="textInput"
                     value={commonTemperature}
-                    onChange={(event) => setCommonTemperature(Number(event.target.value))}
+                    onChange={(event) => handleCommonTemperatureChange(Number(event.target.value))}
                   />
                 </div>
               </label>
@@ -1151,7 +1240,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   step="100"
                   className="textInput"
                   value={commonMaxTokens}
-                  onChange={(event) => setCommonMaxTokens(Number(event.target.value))}
+                  onChange={(event) => handleCommonMaxTokensChange(Number(event.target.value))}
                 />
               </label>
             </div>
@@ -1174,7 +1263,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                   key={tokenPreset}
                   type="button"
                   className={`tokenPill ${commonMaxTokens === tokenPreset ? "tokenPillActive" : ""}`}
-                  onClick={() => setCommonMaxTokens(tokenPreset)}
+                  onClick={() => handleCommonMaxTokensChange(tokenPreset)}
                 >
                   {tokenPreset}
                 </button>
@@ -1953,6 +2042,60 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
                 </span>
                 <span className="summaryPill">가설 {qualityMetrics.hypothesisCount}개</span>
                 <span className="summaryPill">지표 {qualityMetrics.indicatorCount}개</span>
+                <span
+                  className="summaryPill"
+                  style={getMetricStyle(
+                    qualityMetrics.numericDensity >= 4
+                      ? "good"
+                      : qualityMetrics.numericDensity < 2
+                        ? "bad"
+                        : "neutral"
+                  )}
+                >
+                  수치 {qualityMetrics.numericDensity.toFixed(1)}/K
+                </span>
+                <span
+                  className="summaryPill"
+                  style={getMetricStyle(
+                    qualityMetrics.causalChainDepth >= 3
+                      ? "good"
+                      : qualityMetrics.causalChainDepth < 2
+                        ? "bad"
+                        : "neutral"
+                  )}
+                >
+                  인과 {qualityMetrics.causalChainDepth}단계
+                </span>
+                <span
+                  className="summaryPill"
+                  style={getMetricStyle(
+                    qualityMetrics.sourceCount >= 5
+                      ? "good"
+                      : qualityMetrics.sourceCount < 3
+                        ? "bad"
+                        : "neutral"
+                  )}
+                >
+                  출처 {qualityMetrics.sourceCount}개
+                </span>
+                <span
+                  className="summaryPill"
+                  style={getMetricStyle(
+                    qualityMetrics.temporalSpecificity >= 5
+                      ? "good"
+                      : qualityMetrics.temporalSpecificity < 3
+                        ? "bad"
+                        : "neutral"
+                  )}
+                >
+                  날짜 {qualityMetrics.temporalSpecificity}개
+                </span>
+                <span
+                  className="summaryPill"
+                  style={getMetricStyle(qualityMetrics.counterargumentQuality ? "good" : "bad")}
+                >
+                  반론+수치 {qualityMetrics.counterargumentQuality ? "✓" : "✗"}
+                </span>
               </div>
             ) : null}
             </div>
