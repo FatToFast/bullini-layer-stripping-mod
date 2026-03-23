@@ -1495,3 +1495,408 @@ textarea {
     align-items: stretch;
   }
 }
+
+.producerFlow {
+  display: grid;
+  gap: 18px;
+}
+
+.producerFlowPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.producerArrowRow {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.producerFlowStart,
+.producerFlowEnd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 132px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(61, 45, 31, 0.12);
+  color: var(--text);
+  font-weight: 600;
+  text-align: center;
+}
+
+.producerArrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  font-size: 1.2rem;
+  font-weight: 700;
+  min-width: 24px;
+}
+
+.producerStepCard {
+  min-width: 210px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(156, 61, 12, 0.16);
+  background: rgba(255, 252, 246, 0.84);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.producerStepIndex {
+  display: inline-flex;
+  margin-bottom: 10px;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(156, 61, 12, 0.09);
+  color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.producerStepLabel {
+  display: block;
+  font-size: 0.98rem;
+}
+
+.producerStepQuestion {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.5;
+}
+
+.producerFlowGrid {
+  display: grid;
+  grid-template-columns: 1.3fr 0.7fr;
+  gap: 14px;
+}
+
+.producerFlowBlock {
+  padding: 16px 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(61, 45, 31, 0.1);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.producerFlowText {
+  margin: 10px 0 0;
+  color: var(--text);
+  line-height: 1.65;
+}
+
+.producerHandoffList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+@media (max-width: 980px) {
+  .producerFlowGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.successText {
+  margin: 10px 0 0;
+  color: var(--success);
+  font-size: 0.92rem;
+}
+
+
+.decisionBenchmark {
+  display: grid;
+  gap: 18px;
+}
+
+.decisionBenchmarkControls {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.benchmarkField {
+  min-width: min(420px, 100%);
+}
+
+.benchmarkActions {
+  align-items: center;
+}
+
+.decisionBenchmarkGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.decisionBenchmarkCard {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(61, 45, 31, 0.1);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.decisionBenchmarkCardWide {
+  grid-column: 1 / -1;
+}
+
+.benchmarkScoreRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.benchmarkScore {
+  font-size: 2rem;
+  line-height: 1;
+}
+
+.benchmarkList,
+.benchmarkBreakdownList {
+  margin: 10px 0 0;
+  padding-left: 18px;
+}
+
+.benchmarkList {
+  display: grid;
+  gap: 8px;
+}
+
+.benchmarkBreakdownList {
+  display: grid;
+  gap: 12px;
+  padding-left: 0;
+}
+
+.benchmarkBreakdownItem {
+  list-style: none;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(61, 45, 31, 0.08);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+.benchmarkComment {
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+@media (max-width: 980px) {
+  .decisionBenchmarkGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+.benchmarkCompactList {
+  margin-top: 12px;
+}
+
+.benchmarkDiffStats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.decisionBenchmarkHistoryCard {
+  margin-top: 2px;
+}
+
+.benchmarkHistoryList {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.benchmarkHistoryItem {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+  padding: 14px 16px;
+  border: 1px solid rgba(61, 45, 31, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+}
+
+.benchmarkHistoryItem:hover {
+  border-color: rgba(156, 61, 12, 0.2);
+  background: rgba(255, 249, 240, 0.9);
+}
+
+.benchmarkHistoryTitle {
+  margin: 6px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.benchmarkHistoryMeta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+
+.benchmarkHistoryItemSelected {
+  border-color: rgba(156, 61, 12, 0.26);
+  background: rgba(255, 242, 230, 0.95);
+}
+
+
+.workflowMermaid {
+  display: grid;
+  gap: 18px;
+}
+
+.workflowMermaidGrid {
+  display: grid;
+  gap: 14px;
+}
+
+.workflowMermaidCard {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(61, 45, 31, 0.1);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.workflowMermaidCanvas {
+  overflow-x: auto;
+  margin-top: 12px;
+  padding: 8px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(61, 45, 31, 0.08);
+}
+
+.workflowMermaidCanvas svg {
+  width: 100%;
+  height: auto;
+  min-width: 720px;
+}
+
+.workflowMermaidFallback {
+  margin: 12px 0 0;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(61, 45, 31, 0.08);
+  background: rgba(255, 255, 255, 0.78);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  font-family: "SFMono-Regular", "JetBrains Mono", Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+
+.decisionExecution {
+  display: grid;
+  gap: 18px;
+}
+
+.decisionExecutionGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.decisionExecutionWide {
+  grid-column: 1 / -1;
+}
+
+.decisionExecutionResults {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.decisionExecutionCard {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(61, 45, 31, 0.1);
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.decisionExecutionWideCard {
+  grid-column: 1 / -1;
+}
+
+.decisionStageList {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.decisionStageItem {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(61, 45, 31, 0.08);
+  background: rgba(255, 255, 255, 0.75);
+}
+
+@media (max-width: 980px) {
+  .decisionExecutionGrid,
+  .decisionExecutionResults {
+    grid-template-columns: 1fr;
+  }
+}
+
+.benchmarkActionsWrap {
+  flex-wrap: wrap;
+}
+
+.benchmarkPreviewCard {
+  display: grid;
+  gap: 12px;
+}
+
+.benchmarkPreviewGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.benchmarkPreviewBlock {
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid rgba(61, 45, 31, 0.08);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.benchmarkPreviewBlock strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.benchmarkPreviewBlockWide {
+  grid-column: 1 / -1;
+}
+
+.benchmarkTagList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 980px) {
+  .benchmarkPreviewGrid {
+    grid-template-columns: 1fr;
+  }
+}

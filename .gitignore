@@ -7,3 +7,6 @@ npm-debug.log*
 tsconfig.tsbuildinfo
 haystack-search-server/.venv/
 runs/
+decision-runs/
+decision-execution-runs/
+decision-benchmarks/

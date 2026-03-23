@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useMemo } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 
 import {
   runInsightApiStream,
@@ -9,9 +9,16 @@ import {
   evaluateStage,
   type ExtractModelSettings,
 } from "@/lib/insight/api";
+import { mergeDecisionContextIntoInsightDataset } from "@/lib/decision/insight-handoff";
+import { buildDecisionBenchmarkFromCurrentArticle } from "@/lib/decision/article-benchmark";
 import { CUSTOM_MODEL_VALUE, TUNABLE_STAGES } from "@/lib/insight/model-catalog";
+import type { DecisionModelSettings } from "@/lib/decision/types";
 import { DEFAULT_STAGE_PROMPTS } from "@/lib/insight/prompts";
 import type { CachedStageResults, InsightStageName, PipelineModelSettings, StageStatus } from "@/lib/insight/types";
+import { DecisionBenchmarkPanel } from "@/components/decision/benchmark-panel";
+import { DecisionExecutionPanel } from "@/components/decision/execution-panel";
+import { WorkflowMermaidPanel } from "@/components/decision/workflow-mermaid-panel";
+import { ProducerFlowPanel } from "@/components/decision/producer-flow-panel";
 import { AnalysisHistory } from "@/components/insight/analysis-history";
 import { FinalOutputPanel } from "@/components/insight/final-output-panel";
 import { OutputEditor } from "@/components/insight/output-editor";
@@ -21,6 +28,8 @@ import { RunProfilePanel } from "@/components/insight/run-profile-panel";
 import { SearchRoundsLog } from "@/components/insight/search-rounds-log";
 import { StageWorkbench } from "@/components/insight/stage-workbench";
 import {
+  DEFAULT_MAX_TOKENS,
+  DEFAULT_TEMPERATURE,
   OUTPUT_STAGE_TOKENS,
   buildInitialStageConfigs,
   type SampleItem,
@@ -152,7 +161,28 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   const effectiveCommonModel = getEffectiveModel(commonModel, commonCustomModel);
   const tunedStages = useMemo(() => TUNABLE_STAGES.filter((stage) => stage !== "input_validation"), []);
   const overrideCount = tunedStages.filter((stage) => stageConfigs[stage].enabled).length;
+  const [decisionModelSettings, setDecisionModelSettings] = useState<DecisionModelSettings>({
+    defaults: {
+      model: defaultModel,
+      temperature: DEFAULT_TEMPERATURE,
+      maxTokens: DEFAULT_MAX_TOKENS,
+    },
+    stages: {},
+  });
+
+  const [savedDecisionBenchmarks, setSavedDecisionBenchmarks] = useState<import("@/lib/decision/types").DecisionBenchmarkCase[]>([]);
+
   const qualityMetrics = useQualityMetrics(deferredFinalResult?.finalOutput ?? null, stageRecords);
+  const currentArticleBenchmark = useMemo(
+    () =>
+      buildDecisionBenchmarkFromCurrentArticle({
+        analysisPrompt,
+        newsUrl,
+        rawJson,
+        userNotes,
+      }),
+    [analysisPrompt, newsUrl, rawJson, userNotes],
+  );
 
   useEffect(() => {
     if (deferredFinalResult?.finalOutput?.markdownOutput) {
@@ -202,6 +232,52 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       stages,
       persona,
     };
+  }
+
+  function handleApplyDecisionSuggestedSettings(nextSettings: DecisionModelSettings) {
+    setDecisionModelSettings((prev) => ({
+      defaults: {
+        ...(prev.defaults ?? {}),
+        ...(nextSettings.defaults ?? {}),
+      },
+      stages: {
+        ...(prev.stages ?? {}),
+        ...(nextSettings.stages ?? {}),
+      },
+    }));
+  }
+
+  function handleBenchmarkCreated(benchmark: import("@/lib/decision/types").DecisionBenchmarkCase) {
+    setSavedDecisionBenchmarks((prev) => {
+      const next = prev.filter((item) => item.id !== benchmark.id);
+      return [benchmark, ...next];
+    });
+  }
+
+  function handleApplyDecisionInsightHandoff(nextAnalysisPrompt: string, additionalContext: string[]) {
+    setAnalysisPrompt(nextAnalysisPrompt);
+    if (!rawJson.trim()) return;
+    try {
+      const merged = mergeDecisionContextIntoInsightDataset(
+        rawJson,
+        {
+          recommendedQuestion: nextAnalysisPrompt.split("\n")[0] || nextAnalysisPrompt,
+          decisionStatement: nextAnalysisPrompt,
+          recommendedOptionId: "decision-handoff",
+          options: [],
+          orchestrationPlan: [],
+          stakeholderBriefs: [],
+          rehearsalFindings: [],
+          keyAssumptions: [],
+          revisitTriggers: [],
+          metaTuning: { observedBiases: [], skippedChecks: [], nextTimeAdjustments: [] },
+          insightHandoff: { analysisPrompt: nextAnalysisPrompt, additionalContext },
+        },
+      );
+      setRawJson(merged);
+    } catch {
+      setUserNotes((prev) => [prev, ...additionalContext].filter(Boolean).join("\n"));
+    }
   }
 
   function handleCommonModelChange(value: string) {
@@ -583,7 +659,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         <div className="heroCard">
           <span className="kicker">Standalone Localhost App</span>
           <h1 className="heroTitle">Layer-Stripping Workbench</h1>
-          <p className="heroText">프롬프트 → 글 생성 → 편집 → 내보내기 → 리콜 워크플로우를 시험하는 콘솔입니다.</p>
+          <p className="heroText">질문 재정의 → 관점 수렴 → 집필 브리프 → 심화 분석 흐름을 생산자 관점에서 시험하는 콘솔입니다.</p>
         </div>
         <div className="heroMeta">
           <div className="metaPill"><span className="metaLabel">LLM Provider</span><div className="metaValue">{providerLabel}</div></div>
@@ -591,6 +667,23 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
           <div className="metaPill"><span className="metaLabel">Model</span><div className="metaValue">{effectiveCommonModel}</div></div>
         </div>
       </section>
+
+      <ProducerFlowPanel />
+      <DecisionBenchmarkPanel
+        decisionModelSettings={decisionModelSettings}
+        onApplySuggestedSettings={handleApplyDecisionSuggestedSettings}
+        currentArticleBenchmark={currentArticleBenchmark}
+        externalBenchmarks={savedDecisionBenchmarks}
+      />
+      <WorkflowMermaidPanel />
+      <DecisionExecutionPanel
+        decisionModelSettings={decisionModelSettings}
+        defaultTask={analysisPrompt}
+        defaultBackground={newsUrl ? `기사 URL: ${newsUrl}` : ""}
+        defaultContext={rawJson ? ["현재 rawJson이 로드되어 있음", `입력 길이: ${rawJson.length} chars`] : []}
+        onApplyInsightHandoff={handleApplyDecisionInsightHandoff}
+        onBenchmarkCreated={handleBenchmarkCreated}
+      />
 
       <section className="workspace">
         <RunProfilePanel
