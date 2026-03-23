@@ -100,7 +100,11 @@ function loadMermaidScript() {
   });
 }
 
-export function WorkflowMermaidPanel() {
+type Props = {
+  disabled?: boolean;
+};
+
+export function WorkflowMermaidPanel({ disabled = false }: Props) {
   const [isMermaidReady, setIsMermaidReady] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [svgMap, setSvgMap] = useState<Record<string, string>>({});

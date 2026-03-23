@@ -653,6 +653,9 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     });
   }
 
+  // Prerequisite check: Decision panels require rawJson
+  const hasRawJson = rawJson.trim().length > 0;
+
   return (
     <main className="shell">
       <section className="hero">
@@ -667,23 +670,6 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
           <div className="metaPill"><span className="metaLabel">Model</span><div className="metaValue">{effectiveCommonModel}</div></div>
         </div>
       </section>
-
-      <ProducerFlowPanel />
-      <DecisionBenchmarkPanel
-        decisionModelSettings={decisionModelSettings}
-        onApplySuggestedSettings={handleApplyDecisionSuggestedSettings}
-        currentArticleBenchmark={currentArticleBenchmark}
-        externalBenchmarks={savedDecisionBenchmarks}
-      />
-      <WorkflowMermaidPanel />
-      <DecisionExecutionPanel
-        decisionModelSettings={decisionModelSettings}
-        defaultTask={analysisPrompt}
-        defaultBackground={newsUrl ? `기사 URL: ${newsUrl}` : ""}
-        defaultContext={rawJson ? ["현재 rawJson이 로드되어 있음", `입력 길이: ${rawJson.length} chars`] : []}
-        onApplyInsightHandoff={handleApplyDecisionInsightHandoff}
-        onBenchmarkCreated={handleBenchmarkCreated}
-      />
 
       <section className="workspace">
         <RunProfilePanel
@@ -735,90 +721,118 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
           onRun={handleRun}
           onRunAB={handleRunAB}
         />
+      </section>
 
-        <PipelineDiagram activeTab={activeTab} setActiveTab={setActiveTab} searchRounds={searchRounds} stageRecords={stageRecords} />
+      {!hasRawJson && (
+        <section className="decisionPrerequisiteNotice">
+          <div className="prerequisiteCard">
+            <h3>Decision Flow 사용 안내</h3>
+            <p>Decision Flow, Benchmark, Execution 패널을 사용하려면 먼저 <strong>News URL에서 데이터를 추출</strong>하거나 <strong>샘플을 선택</strong>해야 합니다.</p>
+          </div>
+        </section>
+      )}
 
-        <StageWorkbench
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          tunedStages={tunedStages}
-          stageRecords={stageRecords}
-          stageConfigs={stageConfigs}
-          searchRounds={searchRounds}
-          runningStage={runningStage}
-          isRunning={isRunning}
-          activeStage={activeStage}
-          rawJson={rawJson}
-          commonModel={commonModel}
-          commonCustomModel={commonCustomModel}
-          commonTemperature={commonTemperature}
-          commonMaxTokens={commonMaxTokens}
-          effectiveCommonModel={effectiveCommonModel}
-          systemPrompt={systemPrompt}
-          evaluatingStage={evaluatingStage}
-          stageEvaluations={stageEvaluations}
-          searchR1Config={searchR1Config}
-          setSearchR1Config={setSearchR1Config}
-          searchR2Config={searchR2Config}
-          setSearchR2Config={setSearchR2Config}
-          updateStageConfig={updateStageConfig}
-          handleStageModelChange={handleStageModelChange}
-          resetStageOverride={resetStageOverride}
-          handleRunStage={handleRunStage}
-          handleEvaluateStage={handleEvaluateStage}
-          applyCommonToAll={applyCommonToAll}
-          resetAllOverrides={resetAllOverrides}
-        />
+      <ProducerFlowPanel disabled={!hasRawJson} />
+      <DecisionBenchmarkPanel
+        disabled={!hasRawJson}
+        decisionModelSettings={decisionModelSettings}
+        onApplySuggestedSettings={handleApplyDecisionSuggestedSettings}
+        currentArticleBenchmark={currentArticleBenchmark}
+        externalBenchmarks={savedDecisionBenchmarks}
+      />
+      <WorkflowMermaidPanel disabled={!hasRawJson} />
+      <DecisionExecutionPanel
+        disabled={!hasRawJson}
+        decisionModelSettings={decisionModelSettings}
+        defaultTask={analysisPrompt}
+        defaultBackground={newsUrl ? `기사 URL: ${newsUrl}` : ""}
+        defaultContext={rawJson ? ["현재 rawJson이 로드되어 있음", `입력 길이: ${rawJson.length} chars`] : []}
+        onApplyInsightHandoff={handleApplyDecisionInsightHandoff}
+        onBenchmarkCreated={handleBenchmarkCreated}
+      />
 
-        <div className="stack">
-          {error ? (
-            <section className="resultCard">
-              <div className="resultHeader"><h2 className="resultTitle">Run Error</h2><span className="statusBadge status-error">Error</span></div>
-              <p className="errorText">{error}</p>
-            </section>
-          ) : null}
+      <PipelineDiagram activeTab={activeTab} setActiveTab={setActiveTab} searchRounds={searchRounds} stageRecords={stageRecords} />
 
-          <SearchRoundsLog searchRounds={searchRounds} />
+      <StageWorkbench
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        tunedStages={tunedStages}
+        stageRecords={stageRecords}
+        stageConfigs={stageConfigs}
+        searchRounds={searchRounds}
+        runningStage={runningStage}
+        isRunning={isRunning}
+        activeStage={activeStage}
+        rawJson={rawJson}
+        commonModel={commonModel}
+        commonCustomModel={commonCustomModel}
+        commonTemperature={commonTemperature}
+        commonMaxTokens={commonMaxTokens}
+        effectiveCommonModel={effectiveCommonModel}
+        systemPrompt={systemPrompt}
+        evaluatingStage={evaluatingStage}
+        stageEvaluations={stageEvaluations}
+        searchR1Config={searchR1Config}
+        setSearchR1Config={setSearchR1Config}
+        searchR2Config={searchR2Config}
+        setSearchR2Config={setSearchR2Config}
+        updateStageConfig={updateStageConfig}
+        handleStageModelChange={handleStageModelChange}
+        resetStageOverride={resetStageOverride}
+        handleRunStage={handleRunStage}
+        handleEvaluateStage={handleEvaluateStage}
+        applyCommonToAll={applyCommonToAll}
+        resetAllOverrides={resetAllOverrides}
+      />
 
+      <div className="stack">
+        {error ? (
           <section className="resultCard">
-            <div className="resultHeader">
-              <h2 className="resultTitle">Final Output</h2>
-              <span className="statusBadge status-success">{deferredFinalResult?.finalOutput ? "Ready" : "Pending"}</span>
-              {qualityMetrics ? <QualityDashboard metrics={qualityMetrics} /> : null}
-            </div>
-
-            {deferredFinalResult?.finalOutput ? (
-              <div className="resultGrid">
-                {previousResult && finalOutputComparison ? <AnalysisHistory history={analysisHistory} historySearch={historySearch} setHistorySearch={setHistorySearch} onLoad={loadAnalysis} title="분석 이력" open compact /> : null}
-                <FinalOutputPanel finalOutput={deferredFinalResult.finalOutput} mode={deferredFinalResult.finalOutput.mode} />
-                <OutputEditor
-                  editableMarkdown={editableMarkdown}
-                  setEditableMarkdown={setEditableMarkdown}
-                  userNotes={userNotes}
-                  setUserNotes={setUserNotes}
-                  outputTemplate={outputTemplate}
-                  setOutputTemplate={setOutputTemplate}
-                  handleCopy={handleCopy}
-                  copyFeedback={copyFeedback}
-                />
-              </div>
-            ) : (
-              <div className="panelLead">결과가 아직 없습니다. 샘플을 선택하고 실행하면 이 영역에 최종 구조화 출력이 표시됩니다.</div>
-            )}
+            <div className="resultHeader"><h2 className="resultTitle">Run Error</h2><span className="statusBadge status-error">Error</span></div>
+            <p className="errorText">{error}</p>
           </section>
+        ) : null}
 
-          <section className="resultCard">
-            <button type="button" className="resultHeader resultHeaderToggle" onClick={() => setInputSnapshotOpen((prev) => !prev)} aria-expanded={inputSnapshotOpen}>
-              <h2 className="resultTitle">Current Input Snapshot</h2>
-              <span className="statusBadge status-running">{inputSnapshotOpen ? "▲ Collapse" : "▶ Debug"}</span>
-            </button>
-            {inputSnapshotOpen ? <pre className="codeBlock">{deferredRawJson}</pre> : null}
-          </section>
-        </div>
+        <SearchRoundsLog searchRounds={searchRounds} />
 
         <section className="resultCard">
-          <AnalysisHistory history={analysisHistory} historySearch={historySearch} setHistorySearch={setHistorySearch} onLoad={loadAnalysis} title="분석 이력" />
+          <div className="resultHeader">
+            <h2 className="resultTitle">Final Output</h2>
+            <span className="statusBadge status-success">{deferredFinalResult?.finalOutput ? "Ready" : "Pending"}</span>
+            {qualityMetrics ? <QualityDashboard metrics={qualityMetrics} /> : null}
+          </div>
+
+          {deferredFinalResult?.finalOutput ? (
+            <div className="resultGrid">
+              {previousResult && finalOutputComparison ? <AnalysisHistory history={analysisHistory} historySearch={historySearch} setHistorySearch={setHistorySearch} onLoad={loadAnalysis} title="분석 이력" open compact /> : null}
+              <FinalOutputPanel finalOutput={deferredFinalResult.finalOutput} mode={deferredFinalResult.finalOutput.mode} />
+              <OutputEditor
+                editableMarkdown={editableMarkdown}
+                setEditableMarkdown={setEditableMarkdown}
+                userNotes={userNotes}
+                setUserNotes={setUserNotes}
+                outputTemplate={outputTemplate}
+                setOutputTemplate={setOutputTemplate}
+                handleCopy={handleCopy}
+                copyFeedback={copyFeedback}
+              />
+            </div>
+          ) : (
+            <div className="panelLead">결과가 아직 없습니다. 샘플을 선택하고 실행하면 이 영역에 최종 구조화 출력이 표시됩니다.</div>
+          )}
         </section>
+
+        <section className="resultCard">
+          <button type="button" className="resultHeader resultHeaderToggle" onClick={() => setInputSnapshotOpen((prev) => !prev)} aria-expanded={inputSnapshotOpen}>
+            <h2 className="resultTitle">Current Input Snapshot</h2>
+            <span className="statusBadge status-running">{inputSnapshotOpen ? "▲ Collapse" : "▶ Debug"}</span>
+          </button>
+          {inputSnapshotOpen ? <pre className="codeBlock">{deferredRawJson}</pre> : null}
+        </section>
+      </div>
+
+      <section className="resultCard">
+        <AnalysisHistory history={analysisHistory} historySearch={historySearch} setHistorySearch={setHistorySearch} onLoad={loadAnalysis} title="분석 이력" />
       </section>
     </main>
   );

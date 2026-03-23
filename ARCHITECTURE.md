@@ -180,3 +180,59 @@ UI를 붙이더라도 consumer app이 아니라 producer workbench여야 한다.
 3. decision → insight handoff 연결
 4. producer-facing workbench 시각화
 5. 그 다음에야 필요하면 consumer-facing 산물 검토
+
+## 추가 모듈
+
+### `src/lib/utils/diff.ts`
+
+**Deep diff 유틸리티로 benchmark draft 비교에 사용됩니다.**
+
+주요 기능:
+- 두 객체 간의 깊은 차이를 비교 (`added`, `removed`, `changed`, `array-item-added`, `array-item-removed`)
+- 경로 기반 차이 추적 (JSON 경로 표기법 사용)
+- Benchmark 비교에 불필요한 필터링 (timestamp, cost 등 제외)
+- 인간이 읽을 수 있는 형식으로 차이 포맷팅
+
+사용 사례:
+- 이전 benchmark 실행 결과와의 비교
+- prompt 변경 시 output 변화 분석
+- Pipeline 개선 전후 차이 측정
+
+### `src/lib/decision/industry-inference.ts`
+
+**다중 산업 분류 및 신뢰도 평가 모듈입니다.**
+
+주요 기능:
+- 7개 주요 산업 분류 (semiconductor, automotive_battery, energy_utilities, platform_software, financials, healthcare_biotech, general)
+- 키워드 기반 산업 탐지 및 신뢰도 점수 계산 (0-100)
+- 다중 산업 감지 시 충돌 해결 알고리즘
+- 특정 회사/티커 기반 산업 매핑
+- 산업별 오버레이 룰 제공 (stakeholders, success criteria, expected criteria)
+
+충돌 해전 전략:
+1. Player-centric resolution: 포트폴리오에 있는 주요 회사 중심
+2. Semiconductor vs automotive_battery 전략: 반도체 우선 (70% 신뢰도 기준)
+3. Priority rules: 정해진 우선순위에 따라 결정
+
+사용 사례:
+- 입력 데이터의 산업 맥락 파악
+- 산업별 분석 룰 적용
+- Portfolio company의 핵심 산업 식별
+
+### Multi-industry Inference 아키텍처
+
+```text
+입력 데이터 (InsightDataset)
+  ↓
+Corpus 추출 (title + summary + facts + entities + portfolio)
+  ↓
+전체 산업 탐지 (각 산업 키워드 매칭)
+  ↓
+신뢰도 계산 및 정렬
+  ↓
+Player-centric 충돌 해결 (포트폴리오 기반)
+  ↓
+최종 산업 결정 및 오버레이 룰 적용
+```
+
+이 아키텍처는 단일 산업 판단이 아닌, 복합적인 산업 맥락을 이해하고 분석 전략을 적절히 선택하는 데 기여합니다.

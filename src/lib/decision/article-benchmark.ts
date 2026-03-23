@@ -1,6 +1,12 @@
 import { parseInsightDataset } from "@/lib/insight/schemas";
 import type { InsightDataset } from "@/lib/insight/types";
 import type { DecisionBenchmarkCase, DecisionExecutionRun } from "./types";
+import {
+  inferIndustries,
+  formatIndustryDetectionNotes,
+  getIndustryOverlayRules,
+  type IndustryOverlayRule,
+} from "./industry-inference";
 
 type CurrentArticleSource = {
   analysisPrompt?: string;
@@ -305,123 +311,49 @@ function buildEventRule(dataset: InsightDataset): EventRule {
 }
 
 function buildIndustryRule(dataset: InsightDataset): IndustryRule | null {
-  const text = collectCorpus(dataset);
-  const industry = inferIndustry(text);
+  // Use new multi-industry inference module
+  const industryResult = inferIndustries(dataset, { topN: 3 });
 
-  const rules: Record<string, IndustryRule> = {
-    semiconductor: {
-      industry,
-      stakeholders: ["반도체 애널리스트", "공급망/서버 밸류체인 분석", "운용"],
-      successCriteria: [
-        "메모리/비메모리/장비/패키징 중 어느 레이어의 변화인지 구분할 것",
-        "단가, 물량, 믹스 중 무엇이 핵심인지 분리할 것",
-        "고객사 capex·재고·리드타임 확인 포인트를 포함할 것",
-      ],
-      expectedCriteria: [
-        "반도체 밸류체인 레이어 구분이 있어야 한다",
-        "ASP/가동률/재고/리드타임 같은 확인 지표가 포함되어야 한다",
-      ],
-      extraContext: () => [
-        "HBM/DDR/NAND/파운드리/패키징 중 핵심 병목 레이어를 먼저 특정할 것",
-        "고객 capex와 서버/AI 수요의 연동 여부를 별도 질문으로 둘 것",
-      ],
-    },
-    automotive_battery: {
-      industry,
-      stakeholders: ["자동차/배터리 애널리스트", "원재료 분석", "운용"],
-      successCriteria: [
-        "완성차와 배터리 셀/소재 레이어를 구분할 것",
-        "보조금·가격경쟁·재고조정 중 무엇이 핵심인지 분리할 것",
-        "판매량, 인센티브, 소재가격 확인 포인트를 포함할 것",
-      ],
-      expectedCriteria: [
-        "완성차/배터리/소재 레이어 구분이 드러나야 한다",
-        "판매량/인센티브/원재료 가격 지표가 포함되어야 한다",
-      ],
-      extraContext: () => [
-        "EV 수요와 배터리 체인 실적 사이의 시차를 볼 것",
-        "보조금 정책 변화와 가격 인하 압력을 별개 질문으로 둘 것",
-      ],
-    },
-    energy_utilities: {
-      industry,
-      stakeholders: ["에너지 애널리스트", "매크로", "운용"],
-      successCriteria: [
-        "연료가격, 발전단가, 규제요금 중 어느 축이 핵심인지 구분할 것",
-        "spot 가격과 계약가격 반영 시차를 구분할 것",
-        "업스트림/미드스트림/유틸리티/재생에너지 중 수혜 주체를 구분할 것",
-      ],
-      expectedCriteria: [
-        "에너지 체인 내 어느 레이어가 영향받는지 드러나야 한다",
-        "가격/스프레드/가동률/규제요금 지표가 포함되어야 한다",
-      ],
-      extraContext: () => [
-        "연료가격 변화가 전력요금·정산단가에 반영되는 시차를 볼 것",
-        "에너지 가격 방향과 설비 가동률 영향을 분리할 것",
-      ],
-    },
-    platform_software: {
-      industry,
-      stakeholders: ["인터넷/소프트웨어 애널리스트", "제품/성장", "운용"],
-      successCriteria: [
-        "트래픽/광고단가/전환율/ARPU 중 핵심 지표를 특정할 것",
-        "제품 변화와 수익화 변화의 구분을 명확히 할 것",
-        "유저 성장과 마진 개선 중 무엇이 본질인지 가를 것",
-      ],
-      expectedCriteria: [
-        "플랫폼 KPI 중심의 확인 질문이 있어야 한다",
-        "트래픽/광고/구독/클라우드 지표 중 적절한 지표가 포함되어야 한다",
-      ],
-      extraContext: () => [
-        "유저 행동 변화와 매출 인식 사이의 시차를 구분할 것",
-        "제품 업데이트가 engagement 개선인지 monetization 개선인지 분리할 것",
-      ],
-    },
-    financials: {
-      industry,
-      stakeholders: ["금융 애널리스트", "재무", "운용"],
-      successCriteria: [
-        "금리/대손/자본비율/수수료 중 핵심 민감도를 특정할 것",
-        "회계 숫자와 실제 건전성 변화의 차이를 구분할 것",
-        "규제비율 또는 조달비용 확인 포인트를 포함할 것",
-      ],
-      expectedCriteria: [
-        "NIM/대손/자본비율/조달비용 등 금융업 핵심 지표가 포함되어야 한다",
-        "건전성과 이익 해석이 분리되어야 한다",
-      ],
-      extraContext: () => [
-        "headline 실적보다 대손비용과 자본여력 변화를 먼저 볼 것",
-        "규제 변화가 비즈니스 모델에 미치는 영향을 별도 질문으로 둘 것",
-      ],
-    },
-    healthcare_biotech: {
-      industry,
-      stakeholders: ["헬스케어/바이오 애널리스트", "리스크관리", "운용"],
-      successCriteria: [
-        "임상/허가/상업화 단계 중 어디의 이벤트인지 구분할 것",
-        "확률 변화와 가치 반영을 분리할 것",
-        "다음 마일스톤과 실패 시 downside를 명시할 것",
-      ],
-      expectedCriteria: [
-        "임상 단계 또는 허가 단계에 맞는 확인 질문이 있어야 한다",
-        "마일스톤, 확률, 상업화 지표가 포함되어야 한다",
-      ],
-      extraContext: () => [
-        "헤드라인 결과와 통계적/상업적 유의미성을 분리할 것",
-        "다음 임상 마일스톤 전까지 확인 가능한 데이터가 무엇인지 적을 것",
-      ],
-    },
-    general: {
-      industry,
-      stakeholders: [],
-      successCriteria: [],
-      expectedCriteria: [],
-      extraContext: () => [],
+  // If no industries detected or only general, return null
+  if (industryResult.primaryIndustry === "general") {
+    return null;
+  }
+
+  // Get overlay rules for all detected industries (top 3)
+  const overlayRules = getIndustryOverlayRules(industryResult);
+
+  // If no overlay rules, return null
+  if (overlayRules.length === 0) {
+    return null;
+  }
+
+  // Merge all overlay rules into a single IndustryRule
+  // Primary industry takes precedence, then ordered by confidence
+  const primaryRule = overlayRules[0];
+
+  return {
+    industry: industryResult.primaryIndustry,
+    stakeholders: unique(
+      overlayRules.flatMap((rule) => rule.stakeholders),
+    ),
+    successCriteria: unique(
+      overlayRules.flatMap((rule) => rule.successCriteria),
+    ),
+    expectedCriteria: unique(
+      overlayRules.flatMap((rule) => rule.expectedCriteria),
+    ),
+    extraContext: () => {
+      const allExtraContext = overlayRules.flatMap((rule) => rule.extraContext);
+      // Add industry detection info to context
+      const industryInfo = [
+        `감지된 산업: ${industryResult.topIndustries.map((d) => `${d.industry}(${d.confidence}%)`).join(", ")}`,
+      ];
+      if (industryResult.conflictResolved) {
+        industryInfo.push(`충돌 해결: ${industryResult.resolutionReason}`);
+      }
+      return [...industryInfo, ...allExtraContext];
     },
   };
-
-  const rule = rules[industry];
-  return rule.industry === "general" ? null : rule;
 }
 
 function buildTaskFromDataset(dataset: InsightDataset, prompt: string) {
@@ -499,6 +431,11 @@ export function buildDecisionBenchmarkFromCurrentArticle(source: CurrentArticleS
         `event_type: ${dataset.canonical_event.event_type}`,
         `event_angle: ${eventRule.angle}`,
         industryRule ? `industry: ${industryRule.industry}` : "",
+        // Add multi-industry detection info
+        (() => {
+          const industryResult = inferIndustries(dataset, { topN: 3 });
+          return formatIndustryDetectionNotes(industryResult);
+        })(),
         url ? `article_url: ${url}` : "",
       ].filter(Boolean));
     } catch {

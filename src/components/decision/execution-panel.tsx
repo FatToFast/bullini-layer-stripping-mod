@@ -45,6 +45,7 @@ type Props = {
   defaultContext?: string[];
   onApplyInsightHandoff?: (analysisPrompt: string, additionalContext: string[]) => void;
   onBenchmarkCreated?: (benchmark: DecisionBenchmarkCase) => void;
+  disabled?: boolean;
 };
 
 function splitLines(value: string) {
@@ -83,6 +84,7 @@ export function DecisionExecutionPanel({
   defaultContext = [],
   onApplyInsightHandoff,
   onBenchmarkCreated,
+  disabled = false,
 }: Props) {
   const [task, setTask] = useState(defaultTask);
   const [background, setBackground] = useState(defaultBackground);
@@ -293,13 +295,13 @@ export function DecisionExecutionPanel({
       </div>
 
       <div className="inlineActions benchmarkActions benchmarkActionsWrap">
-        <button type="button" className="primaryButton" onClick={handleRunDecision} disabled={!task.trim() || isRunning}>
+        <button type="button" className="primaryButton" onClick={handleRunDecision} disabled={disabled || !task.trim() || isRunning}>
           {isRunning ? "Decision 실행 중..." : "Decision 실행"}
         </button>
-        <button type="button" className="secondaryButton" onClick={handleApplyHandoff} disabled={!result?.finalOutput || !onApplyInsightHandoff}>
+        <button type="button" className="secondaryButton" onClick={handleApplyHandoff} disabled={disabled || !result?.finalOutput || !onApplyInsightHandoff}>
           Insight handoff 적용
         </button>
-        <button type="button" className="secondaryButton" onClick={() => void handleSaveBenchmarkFromRun()} disabled={!benchmarkDraft || isSavingBenchmark}>
+        <button type="button" className="secondaryButton" onClick={() => void handleSaveBenchmarkFromRun()} disabled={disabled || !benchmarkDraft || isSavingBenchmark}>
           {isSavingBenchmark ? "benchmark 저장 중..." : "이 decision run을 benchmark로 저장"}
         </button>
       </div>

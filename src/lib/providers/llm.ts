@@ -5,6 +5,7 @@ type LlmOptions = {
   model?: string;
   temperature?: number;
   maxTokens?: number;
+  signal?: AbortSignal;
 };
 
 export type LlmUsage = {
@@ -106,6 +107,7 @@ export async function callLLM(
         content: userContent,
       },
     ],
+    ...(options?.signal ? { signal: options.signal } : {}),
   });
 
   const payload = completion.choices[0]?.message?.content?.trim();

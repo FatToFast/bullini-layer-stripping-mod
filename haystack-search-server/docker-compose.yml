@@ -1,0 +1,44 @@
+version: '3.8'
+
+services:
+  haystack-search:
+    build: .
+    ports:
+      - "7700:7700"
+    environment:
+      - HAYSTACK_PORT=7700
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_INDEX=dart_filings
+      - EMBEDDING_MODEL=jhgan/ko-sroberta-multitask
+      - EMBEDDING_DIM=768
+      - SERPERDEV_API_KEY=${SERPERDEV_API_KEY:-}
+      - LOG_LEVEL=INFO
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    environment:
+      - QDRANT__SERVICE__HTTP_PORT=6333
+    volumes:
+      - qdrant_data:/qdrant/storage
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  qdrant_data:

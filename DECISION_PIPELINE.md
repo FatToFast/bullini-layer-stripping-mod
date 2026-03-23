@@ -274,3 +274,112 @@ curl -X POST http://localhost:3000/api/decision/benchmark \
 - decision prompt diff와 benchmark score를 CI gate에 연결
 - plannerHistory를 장기 저장해 meta tuning 정밀도 향상
 - producer workbench에서 decision pipeline → insight pipeline의 2단 구조 노출
+
+## Field-level Validation
+
+**Zod 스키마 기반 필드 레벨 검증 시스템입니다.**
+
+각 decision stage는 출력 타입에 대한 엄격한 검증을 수행합니다:
+
+```typescript
+// 예시: Task Reframing 검증
+export const taskReframingSchema = z.object({
+  statedTask: z.string(),
+  actualDecision: z.string(),
+  whyNow: z.string(),
+  hiddenAssumptions: z.array(hiddenAssumptionSchema),
+  nonGoals: z.array(z.string()),
+  reframedQuestions: z.array(decisionQuestionCandidateSchema).min(1),
+  recommendedQuestion: z.string(),
+});
+```
+
+검증 전략:
+1. **Strict parsing**: LLM 출력을 타입에 맞게 변환
+2. **Field validation**: 각 필드의 형식, 길이, 필수 여부 확인
+3. **Business rule validation**: 비즈니스 로직에 맞는지 검증 (예: 최소 2개 옵션)
+4. **Graceful fallback**: 검증 실패 시 local fallback으로 partial output 생성
+
+장점:
+- LLM 출력 불확실성에 대한 방어
+- 구조화된 데이터 보장
+- 디버깅 용이 (어떤 필드에서 실패했는지 명확)
+
+## Version Diff 기능
+
+**이전 버전과의 차이를 분석하여 prompt 튜닝을 지원합니다.**
+
+`src/lib/utils/diff.ts`를 활용한 비교 기능:
+
+```typescript
+// Deep diff 비교 예시
+const changes = deepDiff(previousOutput, currentOutput);
+const filteredChanges = filterBenchmarkChanges(changes);
+const formattedDiff = formatPath(filteredChanges[0].path);
+```
+
+비교 대상:
+- **Prompt 변경**: 프롬프트 수정 시 output 변화 추적
+- **Model 변경**: 다른 모델 사용 시 결과 차이 분석
+- **Stage 변경**: 단계별 정책 변경 영향도 측정
+- **Pipeline 변경**: 전체 플로우 수정 시 효과 분석
+
+활용 사례:
+- Benchmark 실행 결과의 점진적 개선 추적
+- 특정 변경이 결과에 미친 영향 정량화
+- Rollback 필요 시 변경점 식별
+
+## Run & Apply 플로우
+
+**Decision 실행 → 평가 → 적용의 자동화된 루프입니다.**
+
+### 1. Run Phase
+
+```bash
+# Decision pipeline 실행
+curl -X POST http://localhost:3000/api/decision/run \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "input": {
+      "task": "시장 검토 과제 재정의",
+      "stakeholders": ["전략", "영업", "재무"]
+    }
+  }'
+```
+
+### 2. Evaluate Phase
+
+```bash
+# Benchmark으로 평가
+curl -X POST http://localhost:3000/api/decision/benchmark \
+  -H 'Content-Type: application/json' \
+  -d '{"benchmarkId":"standard-decision"}'
+```
+
+### 3. Apply Phase (자동 적용)
+
+평가 결과에 따라 자동으로 적용되는 것들:
+
+1. **Prompt 튜닝**: `suggestedModelSettings`가 생성됨
+2. **Stage 정책**: 성능에 따라 stage 활성화/비활성화
+3. **Fallback 개선**: 반복적으로 실패하는 stage의 fallback 로직 강화
+4. **Meta tuning**: 다음 실행을 위한 조정 사항 반영
+
+자동화된 플로우:
+
+```text
+Decision Run
+  ↓
+Evaluation (Keep/Iterate/Discard)
+  ↓
+Auto-apply suggested settings
+  ↓
+Next Run with improved settings
+  ↓
+History tracking & diff analysis
+```
+
+장점:
+- 인간 개입 없이 지속적 개선
+- 실험 결과의 누적적 활용
+- 버전 관리와 롤백 기능

@@ -15,9 +15,13 @@ const handoffItems = [
   "analysis prompt",
 ] as const;
 
-export function ProducerFlowPanel() {
+type Props = {
+  disabled?: boolean;
+};
+
+export function ProducerFlowPanel({ disabled = false }: Props) {
   return (
-    <section className="producerFlow panel">
+    <section className={`producerFlow panel${disabled ? " disabled" : ""}`}>
       <div className="sectionHeader">
         <div>
           <h2 className="panelTitle">Producer Decision Flow</h2>

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { mkdir, rename, writeFile } from "fs/promises";
 import { join } from "path";
 import type { DecisionBenchmarkFileSummary, DecisionBenchmarkRun } from "@/lib/decision/types";
+import { slugifyFilename } from "@/lib/decision/filename-utils";
 
 const RUNS_DIR = join(process.cwd(), "decision-runs");
 
@@ -31,7 +32,8 @@ export async function POST(request: Request) {
     }
 
     await mkdir(RUNS_DIR, { recursive: true });
-    const id = `${run.benchmark.id}-${Date.now()}`;
+    const safeId = slugifyFilename(run.benchmark.id);
+    const id = `${safeId}-${Date.now()}`;
     const filename = `${id}.json`;
     const filepath = join(RUNS_DIR, filename);
     const metaPath = join(RUNS_DIR, `${id}.meta.json`);
