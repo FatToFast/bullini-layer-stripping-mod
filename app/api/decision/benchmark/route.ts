@@ -1,8 +1,7 @@
 import { DEFAULT_DECISION_BENCHMARKS, getDecisionBenchmarkById } from "@/lib/decision/benchmarks";
-import { readdir, readFile } from "fs/promises";
-import { join } from "path";
 import { runDecisionBenchmark } from "@/lib/decision/benchmark-runner";
 import { parseDecisionBenchmarkCase } from "@/lib/decision/schemas";
+import { listStoredBenchmarks } from "@/lib/decision/bootstrap";
 import type {
   DecisionBenchmarkCase,
   DecisionModelSettings,
@@ -12,29 +11,6 @@ import type {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const CASES_DIR = join(process.cwd(), "decision-benchmarks");
-
-
-async function listStoredBenchmarks(): Promise<DecisionBenchmarkCase[]> {
-  try {
-    const files = await readdir(CASES_DIR);
-    const jsonFiles = files.filter((file) => file.endsWith(".json"));
-    const results = await Promise.all(
-      jsonFiles.map(async (file) => {
-        try {
-          const raw = await readFile(join(CASES_DIR, file), "utf-8");
-          return parseDecisionBenchmarkCase(JSON.parse(raw) as unknown);
-        } catch {
-          return null;
-        }
-      }),
-    );
-    return results.filter((item): item is DecisionBenchmarkCase => item !== null);
-  } catch {
-    return [];
-  }
-}
 
 async function resolveBenchmark(body: RequestBody): Promise<DecisionBenchmarkCase | null> {
   if (body.benchmark) return parseDecisionBenchmarkCase(body.benchmark);

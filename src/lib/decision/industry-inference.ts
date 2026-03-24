@@ -28,6 +28,17 @@ export type MultiIndustryInferenceResult = {
   resolutionReason?: string;
 };
 
+type SearchIndex = {
+  normalizedText: string;
+  tokenSet: Set<string>;
+};
+
+type KeywordIndex = {
+  singleTokenKeywords: string[];
+  phraseKeywords: string[];
+  totalKeywords: number;
+};
+
 // Industry keyword definitions
 const INDUSTRY_KEYWORDS: Record<Industry, string[]> = {
   semiconductor: [
@@ -119,45 +130,86 @@ function extractCorpus(dataset: InsightDataset): string {
   return normalizeText(parts.join(" "));
 }
 
+function buildSearchIndex(text: string): SearchIndex {
+  const normalizedText = normalizeText(text);
+  const tokenSet = new Set(normalizedText.match(/[a-z0-9가-힣-]+/g) ?? []);
+  return { normalizedText, tokenSet };
+}
+
+function buildKeywordIndex(keywords: string[]): KeywordIndex {
+  const normalizedKeywords = keywords.map(normalizeText);
+  return {
+    singleTokenKeywords: normalizedKeywords.filter((keyword) => !keyword.includes(" ")),
+    phraseKeywords: normalizedKeywords.filter((keyword) => keyword.includes(" ")),
+    totalKeywords: keywords.length,
+  };
+}
+
+const INDUSTRY_SEARCH_INDEX = Object.fromEntries(
+  (Object.keys(INDUSTRY_KEYWORDS) as Industry[]).map((industry) => [
+    industry,
+    buildKeywordIndex(INDUSTRY_KEYWORDS[industry]),
+  ]),
+) as Record<Industry, KeywordIndex>;
+
+const PLAYER_PATTERN_ENTRIES = Object.entries(PLAYER_INDUSTRY_MAP).map(
+  ([pattern, industry]) => ({
+    pattern: normalizeText(pattern),
+    industry,
+    isPhrase: pattern.includes(" "),
+  }),
+);
+
+function collectMatchedKeywords(
+  searchIndex: SearchIndex,
+  keywordIndex: KeywordIndex,
+): string[] {
+  const matchedKeywords = keywordIndex.singleTokenKeywords.filter((keyword) =>
+    searchIndex.tokenSet.has(keyword),
+  );
+
+  for (const phraseKeyword of keywordIndex.phraseKeywords) {
+    if (searchIndex.normalizedText.includes(phraseKeyword)) {
+      matchedKeywords.push(phraseKeyword);
+    }
+  }
+
+  return matchedKeywords;
+}
+
 function detectIndustryInText(
-  text: string,
+  searchIndex: SearchIndex,
   industry: Industry,
 ): IndustryDetectionResult | null {
   if (industry === "general") return null;
 
-  const keywords = INDUSTRY_KEYWORDS[industry];
-  const matchedKeywords: string[] = [];
-
-  for (const keyword of keywords) {
-    if (text.includes(keyword.toLowerCase())) {
-      matchedKeywords.push(keyword);
-    }
-  }
+  const keywordIndex = INDUSTRY_SEARCH_INDEX[industry];
+  const matchedKeywords = collectMatchedKeywords(searchIndex, keywordIndex);
 
   if (matchedKeywords.length === 0) return null;
 
   const confidence = Math.min(
     100,
-    Math.round((matchedKeywords.length / keywords.length) * 100),
+    Math.round((matchedKeywords.length / keywordIndex.totalKeywords) * 100),
   );
 
   return {
     industry,
     confidence,
     matchedKeywords,
-    totalKeywords: keywords.length,
+    totalKeywords: keywordIndex.totalKeywords,
   };
 }
 
 function detectAllIndustries(
   dataset: InsightDataset,
 ): IndustryDetectionResult[] {
-  const corpus = extractCorpus(dataset);
+  const searchIndex = buildSearchIndex(extractCorpus(dataset));
   const detections: IndustryDetectionResult[] = [];
 
   for (const industry of Object.keys(INDUSTRY_KEYWORDS) as Industry[]) {
     if (industry === "general") continue;
-    const result = detectIndustryInText(corpus, industry);
+    const result = detectIndustryInText(searchIndex, industry);
     if (result) detections.push(result);
   }
 
@@ -168,18 +220,27 @@ function identifyPlayerCentricIndustry(
   dataset: InsightDataset,
 ): Industry | null {
   const allPlayers = [
+    dataset.canonical_event.title.toLowerCase(),
+    dataset.canonical_event.summary.toLowerCase(),
+    ...dataset.representative_news.keyFacts.map((fact) => fact.toLowerCase()),
+    ...dataset.web_search_facts.map((fact) => fact.toLowerCase()),
     ...dataset.portfolio.map((item) => [
       item.company.toLowerCase(),
       item.ticker?.toLowerCase() ?? "",
     ]),
     ...dataset.entities.map((entity) => entity.name.toLowerCase()),
   ].flat();
+  const playerSearchIndex = buildSearchIndex(allPlayers.join(" "));
 
-  for (const player of allPlayers) {
-    for (const [pattern, industry] of Object.entries(PLAYER_INDUSTRY_MAP)) {
-      if (player.includes(pattern.toLowerCase())) {
-        return industry;
-      }
+  for (const { pattern, industry, isPhrase } of PLAYER_PATTERN_ENTRIES) {
+    if (isPhrase && playerSearchIndex.normalizedText.includes(pattern)) {
+      return industry;
+    }
+    if (playerSearchIndex.tokenSet.has(pattern)) {
+      return industry;
+    }
+    if (allPlayers.some((player) => player.includes(pattern))) {
+      return industry;
     }
   }
 
@@ -194,19 +255,13 @@ function resolveIndustryConflict(
     return { primary: "general", resolved: false, reason: "No industries detected" };
   }
 
-  if (detections.length === 1) {
-    return {
-      primary: detections[0].industry,
-      resolved: false,
-      reason: "Single industry detected",
-    };
-  }
+  const detectionByIndustry = new Map(
+    detections.map((detection) => [detection.industry, detection] as const),
+  );
 
   // Player-centric resolution
   if (playerCentricIndustry) {
-    const playerCentricDetection = detections.find(
-      (d) => d.industry === playerCentricIndustry,
-    );
+    const playerCentricDetection = detectionByIndustry.get(playerCentricIndustry);
     if (playerCentricDetection) {
       return {
         primary: playerCentricIndustry,
@@ -216,26 +271,29 @@ function resolveIndustryConflict(
     }
   }
 
+  if (detections.length === 1) {
+    return {
+      primary: detections[0].industry,
+      resolved: false,
+      reason: "Single industry detected",
+    };
+  }
+
   // Semiconductor vs automotive_battery conflict
-  const hasSemiconductor = detections.some((d) => d.industry === "semiconductor");
-  const hasAutoBattery = detections.some((d) => d.industry === "automotive_battery");
+  const semiconductor = detectionByIndustry.get("semiconductor");
+  const autoBattery = detectionByIndustry.get("automotive_battery");
 
-  if (hasSemiconductor && hasAutoBattery) {
-    const semiconductor = detections.find((d) => d.industry === "semiconductor");
-    const autoBattery = detections.find((d) => d.industry === "automotive_battery");
-
-    if (semiconductor && autoBattery && semiconductor.confidence >= autoBattery.confidence * 0.7) {
-      return {
-        primary: "semiconductor",
-        resolved: true,
-        reason: `Conflict: semiconductor (${semiconductor.confidence}%) vs automotive_battery (${autoBattery.confidence}%)`,
-      };
-    }
+  if (semiconductor && autoBattery && semiconductor.confidence >= autoBattery.confidence * 0.7) {
+    return {
+      primary: "semiconductor",
+      resolved: true,
+      reason: `Conflict: semiconductor (${semiconductor.confidence}%) vs automotive_battery (${autoBattery.confidence}%)`,
+    };
   }
 
   // Priority rules
   for (const priorityIndustry of CONFLICT_RESOLUTION_PRIORITY) {
-    const detection = detections.find((d) => d.industry === priorityIndustry);
+    const detection = detectionByIndustry.get(priorityIndustry);
     if (detection && detection.confidence >= 30) {
       return {
         primary: priorityIndustry,

@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { InsightWorkbench } from "@/components/insight-workbench";
+import { InsightWorkbenchShell } from "@/components/insight-workbench-shell";
 import { getAvailableProviders } from "@/lib/providers/search";
-import { SYSTEM_PROMPT } from "@/lib/insight/prompts";
+import { SYSTEM_PROMPT } from "@/lib/insight/system-prompt";
 
 async function loadSampleFile(filename: string) {
   return readFile(path.join(process.cwd(), "src/lib/insight/samples", filename), "utf8");
@@ -19,7 +19,7 @@ export default async function Page() {
   const searchProviders = getAvailableProviders();
 
   return (
-    <InsightWorkbench
+    <InsightWorkbenchShell
       defaultModel={defaultModel}
       providerLabel={providerLabel}
       searchProviders={searchProviders}

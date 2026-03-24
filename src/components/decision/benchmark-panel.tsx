@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { BenchmarkDraftCard } from "@/components/decision/benchmark-draft-card";
+import { HistoryDiffModal } from "@/components/decision/history-diff-modal";
 import {
   listDecisionBenchmarks,
   listSavedDecisionBenchmarkRuns,
@@ -23,68 +25,18 @@ import {
   type DecisionBenchmarkComparison,
   type StoredDecisionBenchmarkRun,
 } from "@/hooks/use-decision-benchmark-history";
-import { deepDiff, filterBenchmarkChanges, formatPath, type DiffChange } from "@/lib/utils/diff";
+import { useLazyPanelActivation } from "@/hooks/use-lazy-panel-activation";
+import {
+  cloneBenchmarkCase,
+  detectIndustriesFromReasoning,
+  isValidationValid,
+  parseBenchmarkNotes,
+  type BenchmarkRunStage,
+  validateBenchmarkCase,
+} from "@/lib/decision/benchmark-panel-utils";
+import { useLatestRequest } from "@/hooks/use-latest-request";
 
 const CURRENT_ARTICLE_BENCHMARK_ID = "__current_article__";
-
-type FieldValidation = {
-  isValid: boolean;
-  message?: string;
-  touched: boolean;
-};
-
-type ValidationResult = {
-  id: FieldValidation;
-  task: FieldValidation;
-  stakeholders: FieldValidation;
-  successCriteria: FieldValidation;
-  expectedCriteria: FieldValidation;
-};
-
-function validateBenchmarkCase(benchmark: DecisionBenchmarkCase | null, touchedFields: Set<string> = new Set()): ValidationResult {
-  if (!benchmark) {
-    return {
-      id: { isValid: false, message: "Benchmark를 선택하세요", touched: false },
-      task: { isValid: false, message: "", touched: false },
-      stakeholders: { isValid: false, message: "", touched: false },
-      successCriteria: { isValid: false, message: "", touched: false },
-      expectedCriteria: { isValid: false, message: "", touched: false },
-    };
-  }
-
-  const idValidation = /^[a-zA-Z0-9_-]+$/;
-  return {
-    id: {
-      isValid: idValidation.test(benchmark.id),
-      message: idValidation.test(benchmark.id) ? undefined : "ID는 영문, 숫자, 밑줄(_), 하이픈(-)만 허용",
-      touched: touchedFields.has("id"),
-    },
-    task: {
-      isValid: benchmark.input.task.trim().length >= 10,
-      message: benchmark.input.task.trim().length >= 10 ? undefined : "Task는 최소 10자 이상이어야 합니다",
-      touched: touchedFields.has("task"),
-    },
-    stakeholders: {
-      isValid: (benchmark.input.stakeholders?.length ?? 0) >= 1,
-      message: (benchmark.input.stakeholders?.length ?? 0) >= 1 ? undefined : "최소 1명 이상의 stakeholder가 필요합니다",
-      touched: touchedFields.has("stakeholders"),
-    },
-    successCriteria: {
-      isValid: (benchmark.input.successCriteria?.length ?? 0) >= 1,
-      message: (benchmark.input.successCriteria?.length ?? 0) >= 1 ? undefined : "최소 1개 이상의 성공 기준이 필요합니다",
-      touched: touchedFields.has("successCriteria"),
-    },
-    expectedCriteria: {
-      isValid: benchmark.expectedCriteria.length >= 1,
-      message: benchmark.expectedCriteria.length >= 1 ? undefined : "최소 1개 이상의 예상 기준이 필요합니다",
-      touched: touchedFields.has("expectedCriteria"),
-    },
-  };
-}
-
-function isValidationValid(validation: ValidationResult): boolean {
-  return Object.values(validation).every((field) => field.isValid);
-}
 
 type Props = {
   decisionModelSettings: DecisionModelSettings;
@@ -93,34 +45,8 @@ type Props = {
   currentArticleBenchmark?: DecisionBenchmarkCase | null;
   externalBenchmarks?: DecisionBenchmarkCase[];
   disabled?: boolean;
+  deferInitialLoad?: boolean;
 };
-
-function parseBenchmarkNotes(notes?: string) {
-  return (notes ?? "")
-    .split("|")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function splitLines(value: string) {
-  return value
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function cloneBenchmarkCase(benchmark: DecisionBenchmarkCase): DecisionBenchmarkCase {
-  return {
-    ...benchmark,
-    input: {
-      ...benchmark.input,
-      context: [...(benchmark.input.context ?? [])],
-      stakeholders: [...(benchmark.input.stakeholders ?? [])],
-      successCriteria: [...(benchmark.input.successCriteria ?? [])],
-    },
-    expectedCriteria: [...benchmark.expectedCriteria],
-  };
-}
 
 export function DecisionBenchmarkPanel({
   decisionModelSettings,
@@ -129,6 +55,7 @@ export function DecisionBenchmarkPanel({
   currentArticleBenchmark,
   externalBenchmarks = [],
   disabled = false,
+  deferInitialLoad = false,
 }: Props) {
   const [benchmarks, setBenchmarks] = useState<DecisionBenchmarkCase[]>([]);
   const [selectedBenchmarkId, setSelectedBenchmarkId] = useState(currentArticleBenchmark ? CURRENT_ARTICLE_BENCHMARK_ID : "");
@@ -144,28 +71,37 @@ export function DecisionBenchmarkPanel({
   const [selectedHistoryKeys, setSelectedHistoryKeys] = useState<string[]>([]);
   const [showHistoryDiffModal, setShowHistoryDiffModal] = useState(false);
   const [isLoadingList, setIsLoadingList] = useState(true);
-  const [isRunning, setIsRunning] = useState(false);
+  const [runAction, setRunAction] = useState<"idle" | "run" | "run-and-apply">("idle");
   const [isSavingArticleCase, setIsSavingArticleCase] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
   const [isLoadingSavedRuns, setIsLoadingSavedRuns] = useState(true);
-  const [isRunningAndApplying, setIsRunningAndApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [applyFeedback, setApplyFeedback] = useState<string | null>(null);
   const [touchedFields, setTouchedFields] = useState<Set<string>>(new Set());
-  const [runStage, setRunStage] = useState<"idle" | "validating" | "running" | "applying" | "complete">("idle");
+  const [runStage, setRunStage] = useState<BenchmarkRunStage>("idle");
   const [diffViewMode, setDiffViewMode] = useState<"side-by-side" | "unified">("side-by-side");
   const [diffExpanded, setDiffExpanded] = useState(true);
+  const runStageResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { isActivated, activate, panelRef } = useLazyPanelActivation({ defer: deferInitialLoad });
+  const benchmarkListRequest = useLatestRequest();
+  const savedRunsRequest = useLatestRequest();
+  const compareRequest = useLatestRequest();
+  const benchmarkRunRequest = useLatestRequest();
   const { saveBenchmarkRun, loadBenchmarkRun } = useDecisionBenchmarkHistory({
     benchmarkHistory,
     setBenchmarkHistory,
   });
+  const isBusy = runAction !== "idle";
+  const isRunning = runAction === "run";
+  const isRunningAndApplying = runAction === "run-and-apply";
 
   useEffect(() => {
-    let cancelled = false;
+    if (!isActivated) return;
+    const request = benchmarkListRequest.begin();
     void (async () => {
       setIsLoadingList(true);
-      const result = await listDecisionBenchmarks();
-      if (cancelled) return;
+      const result = await listDecisionBenchmarks(request.signal);
+      if (!benchmarkListRequest.isCurrent(request.requestId)) return;
       if ("error" in result) {
         setError(result.error);
         setIsLoadingList(false);
@@ -176,16 +112,18 @@ export function DecisionBenchmarkPanel({
       setIsLoadingList(false);
     })();
     return () => {
-      cancelled = true;
+      if (!benchmarkListRequest.isCurrent(request.requestId)) return;
+      benchmarkListRequest.cancel();
     };
-  }, [currentArticleBenchmark]);
+  }, [currentArticleBenchmark, isActivated]);
 
   useEffect(() => {
-    let cancelled = false;
+    if (!isActivated) return;
+    const request = savedRunsRequest.begin();
     void (async () => {
       setIsLoadingSavedRuns(true);
-      const result = await listSavedDecisionBenchmarkRuns();
-      if (cancelled) return;
+      const result = await listSavedDecisionBenchmarkRuns(request.signal);
+      if (!savedRunsRequest.isCurrent(request.requestId)) return;
       if ("error" in result) {
         setIsLoadingSavedRuns(false);
         return;
@@ -194,7 +132,16 @@ export function DecisionBenchmarkPanel({
       setIsLoadingSavedRuns(false);
     })();
     return () => {
-      cancelled = true;
+      if (!savedRunsRequest.isCurrent(request.requestId)) return;
+      savedRunsRequest.cancel();
+    };
+  }, [isActivated]);
+
+  useEffect(() => {
+    return () => {
+      if (runStageResetTimeoutRef.current) {
+        clearTimeout(runStageResetTimeoutRef.current);
+      }
     };
   }, []);
 
@@ -237,30 +184,10 @@ export function DecisionBenchmarkPanel({
   const selectedBenchmarkNotes = useMemo(() => parseBenchmarkNotes(benchmarkDraft?.notes), [benchmarkDraft?.notes]);
   const validation = useMemo(() => validateBenchmarkCase(benchmarkDraft, touchedFields), [benchmarkDraft, touchedFields]);
   const isFormValid = useMemo(() => isValidationValid(validation), [validation]);
-
-  // Extract industry detection info from benchmark result if available
-  const detectedIndustries = useMemo(() => {
-    if (!benchmarkResult?.evaluation.reasoning) return [];
-    const reasoning = benchmarkResult.evaluation.reasoning.toLowerCase();
-    const industries: string[] = [];
-
-    const industryKeywords: Record<string, string[]> = {
-      "금융": ["finance", "banking", "investment", "financial"],
-      "의료": ["healthcare", "medical", "pharmaceutical", "health"],
-      "제조": ["manufacturing", "production", "factory", "industrial"],
-      "IT/기술": ["technology", "software", "platform", "digital"],
-      "소매": ["retail", "commerce", "consumer", "shopping"],
-      "에너지": ["energy", "power", "renewable", "oil"],
-    };
-
-    for (const [industry, keywords] of Object.entries(industryKeywords)) {
-      if (keywords.some(keyword => reasoning.includes(keyword))) {
-        industries.push(industry);
-      }
-    }
-
-    return industries;
-  }, [benchmarkResult]);
+  const detectedIndustries = useMemo(
+    () => detectIndustriesFromReasoning(benchmarkResult?.evaluation.reasoning),
+    [benchmarkResult?.evaluation.reasoning],
+  );
 
   const confidenceScore = useMemo(() => {
     if (!benchmarkResult) return 0;
@@ -268,15 +195,23 @@ export function DecisionBenchmarkPanel({
   }, [benchmarkResult]);
 
   async function refreshBenchmarks() {
-    const result = await listDecisionBenchmarks();
+    if (!isActivated) return;
+    const request = benchmarkListRequest.begin();
+    const result = await listDecisionBenchmarks(request.signal);
+    if (!benchmarkListRequest.isCurrent(request.requestId)) return;
     if ("error" in result) return;
     setBenchmarks(result);
+    benchmarkListRequest.finish(request.requestId);
   }
 
   async function refreshSavedRuns() {
-    const result = await listSavedDecisionBenchmarkRuns();
+    if (!isActivated) return;
+    const request = savedRunsRequest.begin();
+    const result = await listSavedDecisionBenchmarkRuns(request.signal);
+    if (!savedRunsRequest.isCurrent(request.requestId)) return;
     if ("error" in result) return;
     setSavedRuns(result);
+    savedRunsRequest.finish(request.requestId);
   }
 
   function updateDraft(updater: (current: DecisionBenchmarkCase) => DecisionBenchmarkCase) {
@@ -284,29 +219,44 @@ export function DecisionBenchmarkPanel({
   }
 
   function handleFieldBlur(fieldName: string) {
-    setTouchedFields((prev) => new Set(prev).add(fieldName));
+    setTouchedFields((prev) => {
+      if (prev.has(fieldName)) return prev;
+      const next = new Set(prev);
+      next.add(fieldName);
+      return next;
+    });
   }
 
-  async function handleRunBenchmark() {
+  async function runBenchmarkFlow(mode: "run" | "run-and-apply") {
     if (!benchmarkDraft) return;
-    setIsRunning(true);
+    const request = benchmarkRunRequest.begin();
+    if (runStageResetTimeoutRef.current) {
+      clearTimeout(runStageResetTimeoutRef.current);
+      runStageResetTimeoutRef.current = null;
+    }
+    setRunAction(mode);
     setRunStage("validating");
     setError(null);
     setApplyFeedback(null);
 
-    // Simulate validation stage
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    if (!benchmarkRunRequest.isCurrent(request.requestId)) return;
 
     setRunStage("running");
-    const result = await runDecisionBenchmarkApi(benchmarkDraft, {
-      pipelineModelSettings: decisionModelSettings,
-      stagePolicies,
-    });
+    const result = await runDecisionBenchmarkApi(
+      benchmarkDraft,
+      {
+        pipelineModelSettings: decisionModelSettings,
+        stagePolicies,
+      },
+      request.signal,
+    );
+    if (!benchmarkRunRequest.isCurrent(request.requestId)) return;
 
     if ("error" in result) {
       setError(result.error);
       setBenchmarkResult(null);
-      setIsRunning(false);
+      setRunAction("idle");
       setRunStage("idle");
       return;
     }
@@ -317,18 +267,39 @@ export function DecisionBenchmarkPanel({
 
     setRunStage("applying");
     const saveResult = await saveDecisionBenchmarkRun(result);
+    if (!benchmarkRunRequest.isCurrent(request.requestId)) return;
     if ("error" in saveResult) {
       setError(saveResult.error);
     } else {
-      setApplyFeedback(`Oracle feedback 저장 완료: ${saveResult.filename}`);
       await refreshSavedRuns();
+      if (!benchmarkRunRequest.isCurrent(request.requestId)) return;
+      if (mode === "run") {
+        setApplyFeedback(`Oracle feedback 저장 완료: ${saveResult.filename}`);
+      }
+    }
+
+    if (mode === "run-and-apply") {
+      if (result.suggestedModelSettings) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        if (!benchmarkRunRequest.isCurrent(request.requestId)) return;
+        onApplySuggestedSettings(result.suggestedModelSettings);
+        setApplyFeedback("Applied successfully - 제안된 설정을 decision pipeline에 자동 적용했습니다.");
+      } else {
+        setApplyFeedback("Benchmark 실행 완료 - 제안된 설정이 없습니다.");
+      }
     }
 
     setRunStage("complete");
-    setIsRunning(false);
+    setRunAction("idle");
+    runStageResetTimeoutRef.current = setTimeout(() => {
+      setRunStage("idle");
+      runStageResetTimeoutRef.current = null;
+    }, 2000);
+    benchmarkRunRequest.finish(request.requestId);
+  }
 
-    // Reset stage after animation
-    setTimeout(() => setRunStage("idle"), 2000);
+  async function handleRunBenchmark() {
+    await runBenchmarkFlow("run");
   }
 
   function handleGenerateFromCurrentArticle() {
@@ -385,64 +356,21 @@ export function DecisionBenchmarkPanel({
   }
 
   async function handleRunAndApply() {
-    if (!benchmarkDraft) return;
-    setIsRunningAndApplying(true);
-    setRunStage("validating");
-    setError(null);
-    setApplyFeedback(null);
+    await runBenchmarkFlow("run-and-apply");
+  }
 
-    // Simulate validation stage
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    setRunStage("running");
-    const result = await runDecisionBenchmarkApi(benchmarkDraft, {
-      pipelineModelSettings: decisionModelSettings,
-      stagePolicies,
-    });
-
-    if ("error" in result) {
-      setError(result.error);
-      setBenchmarkResult(null);
-      setIsRunningAndApplying(false);
-      setRunStage("idle");
-      return;
-    }
-
-    setBenchmarkResult(result);
-    setComparison(previousRun ? compareDecisionBenchmarkRuns(previousRun, result) : null);
-    saveBenchmarkRun(result);
-
-    setRunStage("applying");
-    const saveResult = await saveDecisionBenchmarkRun(result);
-    if ("error" in saveResult) {
-      setError(saveResult.error);
-    } else {
-      await refreshSavedRuns();
-    }
-
-    // Auto-apply suggested settings if available
-    if (result.suggestedModelSettings) {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      onApplySuggestedSettings(result.suggestedModelSettings);
-      setApplyFeedback("Applied successfully - 제안된 설정을 decision pipeline에 자동 적용했습니다.");
-    } else {
-      setApplyFeedback("Benchmark 실행 완료 - 제안된 설정이 없습니다.");
-    }
-
-    setRunStage("complete");
-    setIsRunningAndApplying(false);
-
-    // Reset stage after animation
-    setTimeout(() => setRunStage("idle"), 2000);
+  function handleCancelEdit() {
+    setBenchmarkDraft(selectedBenchmark ? cloneBenchmarkCase(selectedBenchmark) : null);
+    setTouchedFields(new Set());
+    setIsEditingDraft(false);
   }
 
   function handleLoadHistory(record: StoredDecisionBenchmarkRun) {
     const loaded = loadBenchmarkRun(record);
-    // Restore the original benchmark from history, not from current catalog
     setBenchmarkDraft(cloneBenchmarkCase(loaded.benchmark));
     setSelectedBenchmarkId(loaded.benchmark.id);
     setBenchmarkResult(loaded);
-    setTouchedFields(new Set()); // Reset touched fields on load
+    setTouchedFields(new Set());
     const previous = benchmarkHistory.find(
       (item) => item.result.benchmark.id === loaded.benchmark.id && item.storageKey !== record.storageKey,
     );
@@ -456,6 +384,7 @@ export function DecisionBenchmarkPanel({
       ? selectedCompareKeys.filter((key) => key !== summary.filename)
       : [...selectedCompareKeys, summary.filename].slice(-2);
     setSelectedCompareKeys(nextKeys);
+    compareRequest.cancel();
 
     if (nextKeys.length !== 2) {
       setSelectedFileCompareRuns(null);
@@ -463,7 +392,9 @@ export function DecisionBenchmarkPanel({
       return;
     }
 
-    const loaded = await Promise.all(nextKeys.map((filename) => loadSavedDecisionBenchmarkRun(filename)));
+    const request = compareRequest.begin();
+    const loaded = await Promise.all(nextKeys.map((filename) => loadSavedDecisionBenchmarkRun(filename, request.signal)));
+    if (!compareRequest.isCurrent(request.requestId)) return;
     if (loaded.some((item) => "error" in item)) {
       setError("선택한 파일 런을 불러오지 못했습니다.");
       setSelectedFileCompareRuns(null);
@@ -475,6 +406,7 @@ export function DecisionBenchmarkPanel({
     setSelectedFileCompareRuns(runs);
     setSelectedFileComparison(compareDecisionBenchmarkRuns(runs[1], runs[0]));
     setError(null);
+    compareRequest.finish(request.requestId);
   }
 
   function toggleHistoryCompare(storageKey: string) {
@@ -494,10 +426,15 @@ export function DecisionBenchmarkPanel({
     return filtered as [StoredDecisionBenchmarkRun, StoredDecisionBenchmarkRun];
   }
 
-  const disableScenarioSelect = isRunning || isLoadingList || (mergedBenchmarks.length === 0 && !currentArticleBenchmark);
+  const disableScenarioSelect = isBusy || isLoadingList || (mergedBenchmarks.length === 0 && !currentArticleBenchmark);
 
   return (
-    <section className="decisionBenchmark panel">
+    <section
+      ref={panelRef}
+      className="decisionBenchmark panel"
+      onPointerEnter={activate}
+      onFocusCapture={activate}
+    >
       <div className="sectionHeader">
         <div>
           <h2 className="panelTitle">Decision Benchmark Loop</h2>
@@ -532,16 +469,16 @@ export function DecisionBenchmarkPanel({
         </label>
 
         <div className="inlineActions benchmarkActions benchmarkActionsWrap">
-          <button type="button" className="secondaryButton" onClick={handleGenerateFromCurrentArticle} disabled={!currentArticleBenchmark || isRunning}>
+          <button type="button" className="secondaryButton" onClick={handleGenerateFromCurrentArticle} disabled={!currentArticleBenchmark || isBusy}>
             현재 기사에서 생성
           </button>
-          <button type="button" className="secondaryButton" onClick={() => void handleSaveCurrentArticleBenchmark()} disabled={!currentArticleBenchmark || isSavingArticleCase}>
+          <button type="button" className="secondaryButton" onClick={() => void handleSaveCurrentArticleBenchmark()} disabled={!currentArticleBenchmark || isSavingArticleCase || isBusy}>
             {isSavingArticleCase ? "저장 중..." : "현재 기사를 benchmark로 저장"}
           </button>
-          <button type="button" className="secondaryButton" onClick={() => setIsEditingDraft((prev) => !prev)} disabled={disabled || !benchmarkDraft}>
+          <button type="button" className="secondaryButton" onClick={() => setIsEditingDraft((prev) => !prev)} disabled={disabled || !benchmarkDraft || isBusy}>
             {isEditingDraft ? "편집 닫기" : "편집 시작"}
           </button>
-          <button type="button" className="primaryButton" onClick={handleRunBenchmark} disabled={disabled || !benchmarkDraft || isRunning || isLoadingList}>
+          <button type="button" className="primaryButton" onClick={handleRunBenchmark} disabled={disabled || !benchmarkDraft || isBusy || isLoadingList}>
             {isRunning ? "Benchmark 실행 중..." : "Benchmark 실행"}
           </button>
           <button
@@ -556,207 +493,27 @@ export function DecisionBenchmarkPanel({
       </div>
 
       {benchmarkDraft ? (
-        <div className="decisionBenchmarkCard benchmarkPreviewCard">
-          <div className="metaRow">
-            <span className="metaLabel">Selected scenario preview</span>
-            <span className="summaryPill">stakeholders {benchmarkDraft.input.stakeholders?.length ?? 0}</span>
-            <span className="summaryPill">criteria {benchmarkDraft.expectedCriteria.length}</span>
-            {isEditingDraft ? <span className="summaryPill summaryPillAccent">editing</span> : null}
-          </div>
-          <div className="benchmarkPreviewGrid">
-            <label className="benchmarkPreviewBlock benchmarkPreviewBlockWide">
-              <strong>Title</strong>
-              {isEditingDraft ? (
-                <input
-                  className="textInput"
-                  value={benchmarkDraft.title}
-                  onChange={(event) => updateDraft((current) => ({ ...current, title: event.target.value }))}
-                />
-              ) : (
-                <p className="benchmarkComment">{benchmarkDraft.title}</p>
-              )}
-            </label>
-            <label className="benchmarkPreviewBlock benchmarkPreviewBlockWide">
-              <strong>Task</strong>
-              {isEditingDraft ? (
-                <>
-                  <textarea
-                    className={`promptInput ${!validation.task.isValid && validation.task.touched ? "field-error" : ""}`}
-                    rows={4}
-                    value={benchmarkDraft.input.task}
-                    onChange={(event) => updateDraft((current) => ({ ...current, input: { ...current.input, task: event.target.value } }))}
-                    onBlur={() => handleFieldBlur("task")}
-                  />
-                  {!validation.task.isValid && validation.task.touched && validation.task.message && (
-                    <p className="field-warning validation-animated">{validation.task.message}</p>
-                  )}
-                </>
-              ) : (
-                <p className="benchmarkComment">{benchmarkDraft.input.task}</p>
-              )}
-            </label>
-            <label className="benchmarkPreviewBlock benchmarkPreviewBlockWide">
-              <strong>Background</strong>
-              {isEditingDraft ? (
-                <textarea
-                  className="promptInput"
-                  rows={4}
-                  value={benchmarkDraft.input.background ?? ""}
-                  onChange={(event) => updateDraft((current) => ({ ...current, input: { ...current.input, background: event.target.value || undefined } }))}
-                />
-              ) : (
-                <p className="benchmarkComment">{benchmarkDraft.input.background ?? "-"}</p>
-              )}
-            </label>
-            <div className="benchmarkPreviewBlock benchmarkPreviewBlockWide">
-              <strong>Metadata</strong>
-              {isEditingDraft ? (
-                <textarea
-                  className="promptInput"
-                  rows={3}
-                  value={selectedBenchmarkNotes.join("\n")}
-                  onChange={(event) => updateDraft((current) => ({ ...current, notes: splitLines(event.target.value).join(" | ") || undefined }))}
-                />
-              ) : (
-                <div className="benchmarkTagList">
-                  {selectedBenchmarkNotes.map((note) => (
-                    <span key={note} className="summaryPill">{note}</span>
-                  ))}
-                </div>
-              )}
-            </div>
-            <label className="benchmarkPreviewBlock">
-              <strong>Stakeholders</strong>
-              {isEditingDraft ? (
-                <>
-                  <textarea
-                    className={`promptInput ${!validation.stakeholders.isValid && validation.stakeholders.touched ? "field-error" : ""}`}
-                    rows={8}
-                    value={(benchmarkDraft.input.stakeholders ?? []).join("\n")}
-                    onChange={(event) => updateDraft((current) => ({ ...current, input: { ...current.input, stakeholders: splitLines(event.target.value) } }))}
-                    onBlur={() => handleFieldBlur("stakeholders")}
-                  />
-                  {!validation.stakeholders.isValid && validation.stakeholders.touched && validation.stakeholders.message && (
-                    <p className="field-warning validation-animated">{validation.stakeholders.message}</p>
-                  )}
-                </>
-              ) : (
-                <ul className="benchmarkList benchmarkCompactList">
-                  {(benchmarkDraft.input.stakeholders ?? []).map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              )}
-            </label>
-            <label className="benchmarkPreviewBlock">
-              <strong>Context</strong>
-              {isEditingDraft ? (
-                <textarea
-                  className="promptInput"
-                  rows={8}
-                  value={(benchmarkDraft.input.context ?? []).join("\n")}
-                  onChange={(event) => updateDraft((current) => ({ ...current, input: { ...current.input, context: splitLines(event.target.value) } }))}
-                />
-              ) : (
-                <ul className="benchmarkList benchmarkCompactList">
-                  {(benchmarkDraft.input.context ?? []).slice(0, 8).map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              )}
-            </label>
-            <label className="benchmarkPreviewBlock">
-              <strong>Success criteria</strong>
-              {isEditingDraft ? (
-                <>
-                  <textarea
-                    className={`promptInput ${!validation.successCriteria.isValid && validation.successCriteria.touched ? "field-error" : ""}`}
-                    rows={8}
-                    value={(benchmarkDraft.input.successCriteria ?? []).join("\n")}
-                    onChange={(event) => updateDraft((current) => ({ ...current, input: { ...current.input, successCriteria: splitLines(event.target.value) } }))}
-                    onBlur={() => handleFieldBlur("successCriteria")}
-                  />
-                  {!validation.successCriteria.isValid && validation.successCriteria.touched && validation.successCriteria.message && (
-                    <p className="field-warning validation-animated">{validation.successCriteria.message}</p>
-                  )}
-                </>
-              ) : (
-                <ul className="benchmarkList benchmarkCompactList">
-                  {(benchmarkDraft.input.successCriteria ?? []).map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              )}
-            </label>
-            <label className="benchmarkPreviewBlock">
-              <strong>Expected criteria</strong>
-              {isEditingDraft ? (
-                <>
-                  <textarea
-                    className={`promptInput ${!validation.expectedCriteria.isValid && validation.expectedCriteria.touched ? "field-error" : ""}`}
-                    rows={8}
-                    value={benchmarkDraft.expectedCriteria.join("\n")}
-                    onChange={(event) => updateDraft((current) => ({ ...current, expectedCriteria: splitLines(event.target.value) }))}
-                    onBlur={() => handleFieldBlur("expectedCriteria")}
-                  />
-                  {!validation.expectedCriteria.isValid && validation.expectedCriteria.touched && validation.expectedCriteria.message && (
-                    <p className="field-warning validation-animated">{validation.expectedCriteria.message}</p>
-                  )}
-                </>
-              ) : (
-                <ul className="benchmarkList benchmarkCompactList">
-                  {benchmarkDraft.expectedCriteria.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              )}
-            </label>
-          </div>
-          {isEditingDraft ? (
-            <div className="inlineActions benchmarkActions benchmarkActionsWrap">
-              <button type="button" className="secondaryButton" onClick={() => setBenchmarkDraft(selectedBenchmark ? cloneBenchmarkCase(selectedBenchmark) : null)}>
-                편집 취소
-              </button>
-              <button type="button" className="secondaryButton" onClick={() => void handleSaveEditedBenchmark()} disabled={isSavingDraft || !isFormValid}>
-                {isSavingDraft ? "benchmark 저장 중..." : "편집본 저장"}
-              </button>
-              <button
-                type="button"
-                className="run-apply-btn"
-                onClick={() => void handleRunAndApply()}
-                disabled={isRunningAndApplying || isRunning || !isFormValid}
-              >
-                {isRunningAndApplying || isRunning ? (
-                  <span className="run-apply-content">
-                    <span className="run-spinner"></span>
-                    <span className="run-text">
-                      {runStage === "validating" && "Validating..."}
-                      {runStage === "running" && "Running benchmark..."}
-                      {runStage === "applying" && "Applying settings..."}
-                      {runStage === "complete" && "✓ Complete!"}
-                    </span>
-                  </span>
-                ) : (
-                  "▶ Run & Apply"
-                )}
-                {(isRunningAndApplying || isRunning) && (
-                  <div className="run-progress-bar">
-                    <div
-                      className="run-progress-fill"
-                      style={{
-                        width: runStage === "validating" ? "25%" : runStage === "running" ? "60%" : runStage === "applying" ? "85%" : "100%",
-                      }}
-                    ></div>
-                  </div>
-                )}
-              </button>
-            </div>
-          ) : null}
-        </div>
+        <BenchmarkDraftCard
+          benchmarkDraft={benchmarkDraft}
+          isEditingDraft={isEditingDraft}
+          validation={validation}
+          selectedBenchmarkNotes={selectedBenchmarkNotes}
+          isSavingDraft={isSavingDraft}
+          isFormValid={isFormValid}
+          isRunning={isRunning}
+          isRunningAndApplying={isRunningAndApplying}
+          runStage={runStage}
+          onUpdateDraft={updateDraft}
+          onFieldBlur={handleFieldBlur}
+          onCancelEdit={handleCancelEdit}
+          onSaveEditedBenchmark={() => void handleSaveEditedBenchmark()}
+          onRunAndApply={() => void handleRunAndApply()}
+        />
       ) : null}
 
       {error ? <p className="errorText">{error}</p> : null}
       {applyFeedback ? <p className="successText">{applyFeedback}</p> : null}
+      {!isActivated ? <p className="panelLead">패널이 화면에 들어오면 benchmark 목록과 저장된 run을 불러옵니다.</p> : null}
 
       {benchmarkResult ? (
         <div className="decisionBenchmarkGrid">
@@ -937,250 +694,16 @@ export function DecisionBenchmarkPanel({
         </div>
       </div>
 
-      {/* History Diff Modal */}
       {showHistoryDiffModal && selectedHistoryKeys.length === 2 ? (
         <HistoryDiffModal
           runs={getSelectedHistoryRuns()}
           onClose={() => setShowHistoryDiffModal(false)}
           diffViewMode={diffViewMode}
-          onToggleDiffMode={() => setDiffViewMode(prev => prev === "side-by-side" ? "unified" : "side-by-side")}
+          onToggleDiffMode={() => setDiffViewMode((prev) => (prev === "side-by-side" ? "unified" : "side-by-side"))}
           diffExpanded={diffExpanded}
-          onToggleExpanded={() => setDiffExpanded(prev => !prev)}
+          onToggleExpanded={() => setDiffExpanded((prev) => !prev)}
         />
       ) : null}
     </section>
-  );
-}
-
-function HistoryDiffModal({
-  runs,
-  onClose,
-  diffViewMode,
-  onToggleDiffMode,
-  diffExpanded,
-  onToggleExpanded,
-}: {
-  runs: [StoredDecisionBenchmarkRun, StoredDecisionBenchmarkRun];
-  onClose: () => void;
-  diffViewMode: "side-by-side" | "unified";
-  onToggleDiffMode: () => void;
-  diffExpanded: boolean;
-  onToggleExpanded: () => void;
-}) {
-  const [previous, current] = runs;
-
-  const changes = useMemo(() => {
-    const diffs = deepDiff(previous.result, current.result);
-    return filterBenchmarkChanges(diffs);
-  }, [previous, current]);
-
-  const renderFieldValue = (value: unknown): React.ReactNode => {
-    if (value === null || value === undefined) return <span className="diff-null">-</span>;
-    if (typeof value === "string") {
-      // Try to parse as JSON for syntax highlighting
-      try {
-        const parsed = JSON.parse(value);
-        return <pre className="diff-json">{JSON.stringify(parsed, null, 2)}</pre>;
-      } catch {
-        return <span className="diff-string">{value}</span>;
-      }
-    }
-    if (typeof value === "number") return <span className="diff-number">{value}</span>;
-    if (typeof value === "boolean") return <span className="diff-boolean">{String(value)}</span>;
-    if (Array.isArray(value)) {
-      return (
-        <ul className="diff-array">
-          {value.map((item, idx) => (
-            <li key={idx}>{renderFieldValue(item)}</li>
-          ))}
-        </ul>
-      );
-    }
-    if (typeof value === "object") {
-      return (
-        <div className="diff-object">
-          {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
-            <div key={k} className="diff-object-entry">
-              <span className="diff-object-key">{k}:</span> {renderFieldValue(v)}
-            </div>
-          ))}
-        </div>
-      );
-    }
-    return <span className="diff-string">{String(value)}</span>;
-  };
-
-  const renderField = (
-    label: string,
-    oldValue: unknown,
-    newValue: unknown,
-    changeType: "added" | "removed" | "changed" | "unchanged",
-  ) => {
-    const className =
-      changeType === "added"
-        ? "diff-added"
-        : changeType === "removed"
-          ? "diff-removed"
-          : changeType === "changed"
-            ? "diff-changed"
-            : "diff-unchanged";
-
-    return (
-      <div key={label} className={`diff-field ${className}`}>
-        <div className="diff-field-label">{label}</div>
-        {changeType !== "added" && <div className="diff-field-value">{renderFieldValue(oldValue)}</div>}
-        {changeType !== "removed" && (
-          <div className="diff-field-value">
-            {changeType === "changed" && "→ "}
-            {renderFieldValue(newValue)}
-          </div>
-        )}
-      </div>
-    );
-  };
-
-  return (
-    <div className="diff-modal-overlay" onClick={onClose}>
-      <div className="diff-modal-content" onClick={(e) => e.stopPropagation()}>
-        <div className="diff-modal-header">
-          <h3 className="diff-modal-title">Benchmark Draft Comparison</h3>
-          <div className="diff-modal-actions">
-            <button
-              className="diff-view-toggle"
-              onClick={onToggleDiffMode}
-              type="button"
-            >
-              {diffViewMode === "side-by-side" ? "→ Unified View" : "→ Side-by-Side"}
-            </button>
-            <button className="diff-modal-close" onClick={onClose}>
-              ×
-            </button>
-          </div>
-        </div>
-
-        {diffViewMode === "unified" ? (
-          <div className="diff-modal-body-unified">
-            <div className="diff-panel-unified">
-              <div className="diff-panel-header">
-                <button
-                  className="diff-expand-toggle"
-                  onClick={onToggleExpanded}
-                  type="button"
-                >
-                  {diffExpanded ? "▼ Collapse" : "▶ Expand"}
-                </button>
-                <span>Unified Diff</span>
-              </div>
-              {diffExpanded && (
-                <div className="diff-fields-unified">
-                  {changes.length === 0 ? (
-                    <p className="panelLead">No changes found</p>
-                  ) : (
-                    changes.map((change, idx) => {
-                      const changeLabel =
-                        change.type === "added"
-                          ? "ADDED"
-                          : change.type === "removed"
-                            ? "REMOVED"
-                            : change.type === "array-item-added"
-                              ? "ADDED"
-                              : change.type === "array-item-removed"
-                                ? "REMOVED"
-                                : "CHANGED";
-                      const changeClass =
-                        change.type === "added" || change.type === "array-item-added"
-                          ? "diff-added"
-                          : change.type === "removed" || change.type === "array-item-removed"
-                            ? "diff-removed"
-                            : "diff-changed";
-
-                      return (
-                        <div key={idx} className={`diff-field-unified ${changeClass}`}>
-                          <div className="diff-field-label">
-                            <span className="diff-change-type">{changeLabel}</span>
-                            <span className="diff-field-path">{formatPath(change.path)}</span>
-                          </div>
-                          <div className="diff-field-value">
-                            {change.type === "changed" ? (
-                              <>
-                                <div className="diff-old-value">
-                                  <span className="diff-value-label">Old: </span>
-                                  {renderFieldValue(change.oldValue)}
-                                </div>
-                                <div className="diff-new-value">
-                                  <span className="diff-value-label">New: </span>
-                                  {renderFieldValue(change.newValue)}
-                                </div>
-                              </>
-                            ) : (
-                              renderFieldValue(change.value)
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
-        ) : (
-          <div className="diff-modal-body">
-            <div className="diff-panel">
-              <div className="diff-panel-header">
-                {formatDecisionBenchmarkDate(previous.timestamp)} (Previous)
-              </div>
-              <div className="diff-fields">
-                {changes.length === 0 ? (
-                  <p className="panelLead">No changes found</p>
-                ) : (
-                  changes.map((change) => {
-                    if (change.type === "added") {
-                      return null;
-                    }
-                    if (change.type === "removed") {
-                      return renderField(formatPath(change.path), change.value, null, "removed");
-                    }
-                    if (change.type === "array-item-removed") {
-                      return renderField(formatPath(change.path), change.value, null, "removed");
-                    }
-                    if (change.type === "changed") {
-                      return renderField(formatPath(change.path), change.oldValue, change.newValue, "changed");
-                    }
-                    return null;
-                  })
-                )}
-              </div>
-            </div>
-            <div className="diff-panel">
-              <div className="diff-panel-header">
-                {formatDecisionBenchmarkDate(current.timestamp)} (Current)
-              </div>
-              <div className="diff-fields">
-                {changes.length === 0 ? (
-                  <p className="panelLead">No changes found</p>
-                ) : (
-                  changes.map((change) => {
-                    if (change.type === "added") {
-                      return renderField(formatPath(change.path), null, change.value, "added");
-                    }
-                    if (change.type === "array-item-added") {
-                      return renderField(formatPath(change.path), null, change.value, "added");
-                    }
-                    if (change.type === "removed" || change.type === "array-item-removed") {
-                      return null;
-                    }
-                    if (change.type === "changed") {
-                      return renderField(formatPath(change.path), change.oldValue, change.newValue, "changed");
-                    }
-                    return null;
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
   );
 }

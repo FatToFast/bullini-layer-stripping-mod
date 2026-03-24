@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+
 import type { InsightStageName, StageRecord } from "@/lib/insight/types";
 import type { SearchRoundState, TabId } from "@/hooks/use-pipeline-state";
 
@@ -33,9 +35,18 @@ type PipelineDiagramProps = {
 };
 
 export function PipelineDiagram({ activeTab, setActiveTab, searchRounds, stageRecords }: PipelineDiagramProps) {
+  const searchRoundMap = useMemo(
+    () => new Map(searchRounds.map((round) => [round.round, round] as const)),
+    [searchRounds],
+  );
+  const stageRecordMap = useMemo(
+    () => new Map(stageRecords.map((record) => [record.stage, record] as const)),
+    [stageRecords],
+  );
+
   function getNodeStatus(node: DiagramNode): "idle" | "running" | "done" | "error" {
     if (node.kind === "search") {
-      const searchRound = searchRounds.find((item) => item.round === node.searchRound);
+      const searchRound = node.searchRound ? searchRoundMap.get(node.searchRound) : undefined;
       if (!searchRound) return "idle";
       if (searchRound.error) return "error";
       if (searchRound.results.length > 0) return "done";
@@ -43,7 +54,7 @@ export function PipelineDiagram({ activeTab, setActiveTab, searchRounds, stageRe
     }
 
     if (!node.stage) return "idle";
-    const record = stageRecords.find((item) => item.stage === node.stage);
+    const record = stageRecordMap.get(node.stage);
     if (!record) return "idle";
     if (record.status === "running") return "running";
     if (record.status === "success") return "done";

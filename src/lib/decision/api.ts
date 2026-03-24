@@ -13,6 +13,15 @@ import type {
 
 const JSON_HEADERS = { "Content-Type": "application/json" } as const;
 
+type DecisionWorkspaceBootstrapPayload = {
+  benchmarks: DecisionBenchmarkCase[];
+  benchmarkRuns: DecisionBenchmarkFileSummary[];
+  decisionRuns: DecisionRunFileSummary[];
+};
+
+let decisionWorkspaceBootstrapCache: DecisionWorkspaceBootstrapPayload | null = null;
+let decisionWorkspaceBootstrapInflight: Promise<DecisionWorkspaceBootstrapPayload | { error: string }> | null = null;
+
 async function postApi<T>(url: string, body: unknown, label: string, signal?: AbortSignal): Promise<T | { error: string }> {
   try {
     const res = await fetch(url, {
@@ -27,6 +36,38 @@ async function postApi<T>(url: string, body: unknown, label: string, signal?: Ab
   } catch (error) {
     return { error: error instanceof Error ? error.message : `Network error: ${label}` };
   }
+}
+
+function clearDecisionWorkspaceBootstrapCache() {
+  decisionWorkspaceBootstrapCache = null;
+  decisionWorkspaceBootstrapInflight = null;
+}
+
+async function loadDecisionWorkspaceBootstrap(signal?: AbortSignal): Promise<DecisionWorkspaceBootstrapPayload | { error: string }> {
+  if (signal) {
+    return getApi<DecisionWorkspaceBootstrapPayload>("/api/decision/bootstrap", "Load decision workspace bootstrap", signal);
+  }
+
+  if (decisionWorkspaceBootstrapCache) {
+    return decisionWorkspaceBootstrapCache;
+  }
+
+  if (decisionWorkspaceBootstrapInflight) {
+    return decisionWorkspaceBootstrapInflight;
+  }
+
+  decisionWorkspaceBootstrapInflight = getApi<DecisionWorkspaceBootstrapPayload>(
+    "/api/decision/bootstrap",
+    "Load decision workspace bootstrap",
+  ).then((result) => {
+    if (!("error" in result)) {
+      decisionWorkspaceBootstrapCache = result;
+    }
+    decisionWorkspaceBootstrapInflight = null;
+    return result;
+  });
+
+  return decisionWorkspaceBootstrapInflight;
 }
 
 async function getApi<T>(url: string, label: string, signal?: AbortSignal): Promise<T | { error: string }> {
@@ -63,7 +104,7 @@ export function runDecisionPipelineApi(
 }
 
 export async function listDecisionBenchmarks(signal?: AbortSignal): Promise<DecisionBenchmarkCase[] | { error: string }> {
-  const result = await getApi<{ benchmarks: DecisionBenchmarkCase[] }>("/api/decision/benchmark", "List decision benchmarks", signal);
+  const result = await loadDecisionWorkspaceBootstrap(signal);
   if ("error" in result) return result;
   return result.benchmarks ?? [];
 }
@@ -104,7 +145,12 @@ export function saveDecisionBenchmarkCase(
     benchmark,
     "Save decision benchmark case",
     signal,
-  );
+  ).then((result) => {
+    if (!("error" in result)) {
+      clearDecisionWorkspaceBootstrapCache();
+    }
+    return result;
+  });
 }
 
 export function saveDecisionBenchmarkRun(
@@ -116,19 +162,20 @@ export function saveDecisionBenchmarkRun(
     run,
     "Save decision benchmark run",
     signal,
-  );
+  ).then((result) => {
+    if (!("error" in result)) {
+      clearDecisionWorkspaceBootstrapCache();
+    }
+    return result;
+  });
 }
 
 export async function listSavedDecisionBenchmarkRuns(
   signal?: AbortSignal,
 ): Promise<DecisionBenchmarkFileSummary[] | { error: string }> {
-  const result = await getApi<{ runs: DecisionBenchmarkFileSummary[] }>(
-    "/api/decision/list-benchmark-runs",
-    "List saved decision benchmark runs",
-    signal,
-  );
+  const result = await loadDecisionWorkspaceBootstrap(signal);
   if ("error" in result) return result;
-  return result.runs ?? [];
+  return result.benchmarkRuns ?? [];
 }
 
 export function loadSavedDecisionBenchmarkRun(
@@ -151,19 +198,20 @@ export function saveDecisionRun(
     record,
     "Save decision run",
     signal,
-  );
+  ).then((result) => {
+    if (!("error" in result)) {
+      clearDecisionWorkspaceBootstrapCache();
+    }
+    return result;
+  });
 }
 
 export async function listSavedDecisionRuns(
   signal?: AbortSignal,
 ): Promise<DecisionRunFileSummary[] | { error: string }> {
-  const result = await getApi<{ runs: DecisionRunFileSummary[] }>(
-    "/api/decision/list-runs",
-    "List saved decision runs",
-    signal,
-  );
+  const result = await loadDecisionWorkspaceBootstrap(signal);
   if ("error" in result) return result;
-  return result.runs ?? [];
+  return result.decisionRuns ?? [];
 }
 
 export function loadSavedDecisionRun(

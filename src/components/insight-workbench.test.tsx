@@ -124,6 +124,10 @@ const createMockPipelineState = (rawJson = "") => {
 };
 
 let currentMockState = createMockPipelineState();
+const producerFlowPanelMock = vi.fn((props: { disabled?: boolean }) => <div data-testid="producer-flow-panel">ProducerFlowPanel</div>);
+const decisionBenchmarkPanelMock = vi.fn((props: { disabled?: boolean }) => <div data-testid="decision-benchmark-panel">DecisionBenchmarkPanel</div>);
+const workflowMermaidPanelMock = vi.fn((props: { disabled?: boolean }) => <div data-testid="workflow-mermaid-panel">WorkflowMermaidPanel</div>);
+const decisionExecutionPanelMock = vi.fn((props: { disabled?: boolean }) => <div data-testid="decision-execution-panel">DecisionExecutionPanel</div>);
 
 // Mock the hooks and components
 vi.mock("@/hooks/use-pipeline-state", () => ({
@@ -153,19 +157,31 @@ vi.mock("@/lib/decision/article-benchmark", () => ({
 }));
 
 vi.mock("@/components/decision/producer-flow-panel", () => ({
-  ProducerFlowPanel: () => <div data-testid="producer-flow-panel">ProducerFlowPanel</div>,
+  ProducerFlowPanel: (props: { disabled?: boolean }) => producerFlowPanelMock(props),
 }));
 
 vi.mock("@/components/decision/benchmark-panel", () => ({
-  DecisionBenchmarkPanel: () => <div data-testid="decision-benchmark-panel">DecisionBenchmarkPanel</div>,
+  DecisionBenchmarkPanel: (props: { disabled?: boolean }) => decisionBenchmarkPanelMock(props),
 }));
 
 vi.mock("@/components/decision/workflow-mermaid-panel", () => ({
-  WorkflowMermaidPanel: () => <div data-testid="workflow-mermaid-panel">WorkflowMermaidPanel</div>,
+  WorkflowMermaidPanel: (props: { disabled?: boolean }) => workflowMermaidPanelMock(props),
 }));
 
 vi.mock("@/components/decision/execution-panel", () => ({
-  DecisionExecutionPanel: () => <div data-testid="decision-execution-panel">DecisionExecutionPanel</div>,
+  DecisionExecutionPanel: (props: { disabled?: boolean }) => decisionExecutionPanelMock(props),
+}));
+
+vi.mock("@/components/insight/lazy-panels", () => ({
+  AnalysisHistory: () => <div data-testid="analysis-history">AnalysisHistory</div>,
+  DecisionBenchmarkPanel: (props: { disabled?: boolean }) => decisionBenchmarkPanelMock(props),
+  DecisionExecutionPanel: (props: { disabled?: boolean }) => decisionExecutionPanelMock(props),
+  FinalOutputPanel: () => <div data-testid="final-output-panel">FinalOutputPanel</div>,
+  OutputEditor: () => <div data-testid="output-editor">OutputEditor</div>,
+  QualityDashboard: () => <div data-testid="quality-dashboard">QualityDashboard</div>,
+  SearchRoundsLog: () => <div data-testid="search-rounds-log">SearchRoundsLog</div>,
+  StageWorkbench: () => <div data-testid="stage-workbench">StageWorkbench</div>,
+  WorkflowMermaidPanel: (props: { disabled?: boolean }) => workflowMermaidPanelMock(props),
 }));
 
 vi.mock("@/components/insight/run-profile-panel", () => ({
@@ -174,30 +190,6 @@ vi.mock("@/components/insight/run-profile-panel", () => ({
 
 vi.mock("@/components/insight/pipeline-diagram", () => ({
   PipelineDiagram: () => <div data-testid="pipeline-diagram">PipelineDiagram</div>,
-}));
-
-vi.mock("@/components/insight/stage-workbench", () => ({
-  StageWorkbench: () => <div data-testid="stage-workbench">StageWorkbench</div>,
-}));
-
-vi.mock("@/components/insight/search-rounds-log", () => ({
-  SearchRoundsLog: () => <div data-testid="search-rounds-log">SearchRoundsLog</div>,
-}));
-
-vi.mock("@/components/insight/analysis-history", () => ({
-  AnalysisHistory: () => <div data-testid="analysis-history">AnalysisHistory</div>,
-}));
-
-vi.mock("@/components/insight/final-output-panel", () => ({
-  FinalOutputPanel: () => <div data-testid="final-output-panel">FinalOutputPanel</div>,
-}));
-
-vi.mock("@/components/insight/output-editor", () => ({
-  OutputEditor: () => <div data-testid="output-editor">OutputEditor</div>,
-}));
-
-vi.mock("@/components/insight/quality-dashboard", () => ({
-  QualityDashboard: () => <div data-testid="quality-dashboard">QualityDashboard</div>,
 }));
 
 import { InsightWorkbench } from "./insight-workbench";
@@ -223,6 +215,10 @@ describe("InsightWorkbench - Panel Ordering", () => {
   beforeEach(() => {
     cleanup();
     currentMockState = createMockPipelineState();
+    producerFlowPanelMock.mockClear();
+    decisionBenchmarkPanelMock.mockClear();
+    workflowMermaidPanelMock.mockClear();
+    decisionExecutionPanelMock.mockClear();
   });
 
   it("should render all expected panels", () => {
@@ -247,6 +243,10 @@ describe("InsightWorkbench - Panel Ordering", () => {
 describe("InsightWorkbench - Prerequisite Checks (Manual Verification)", () => {
   beforeEach(() => {
     cleanup();
+    producerFlowPanelMock.mockClear();
+    decisionBenchmarkPanelMock.mockClear();
+    workflowMermaidPanelMock.mockClear();
+    decisionExecutionPanelMock.mockClear();
   });
 
   it("should have rawJson state accessible", () => {
@@ -257,5 +257,35 @@ describe("InsightWorkbench - Prerequisite Checks (Manual Verification)", () => {
   it("should have rawJson with data", () => {
     currentMockState = createMockPipelineState('{"test": "data"}');
     expect(currentMockState.rawJson).toBe('{"test": "data"}');
+  });
+
+  it("should keep benchmark and execution panels enabled even when rawJson is empty", () => {
+    currentMockState = createMockPipelineState("");
+
+    render(<InsightWorkbench {...defaultProps} />);
+
+    expect(producerFlowPanelMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: true }));
+    expect(workflowMermaidPanelMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: true }));
+    expect(decisionBenchmarkPanelMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ disabled: true }),
+    );
+    expect(decisionExecutionPanelMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ disabled: true }),
+    );
+  });
+
+  it("should not pass disabled to benchmark and execution panels when rawJson exists", () => {
+    currentMockState = createMockPipelineState('{"test": "data"}');
+
+    render(<InsightWorkbench {...defaultProps} />);
+
+    expect(producerFlowPanelMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: false }));
+    expect(workflowMermaidPanelMock).toHaveBeenCalledWith(expect.objectContaining({ disabled: false }));
+    expect(decisionBenchmarkPanelMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ disabled: true }),
+    );
+    expect(decisionExecutionPanelMock).toHaveBeenCalledWith(
+      expect.not.objectContaining({ disabled: true }),
+    );
   });
 });

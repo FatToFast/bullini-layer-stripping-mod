@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from "react";
+import { useMemo, type Dispatch, type SetStateAction } from "react";
 
 import { CUSTOM_MODEL_VALUE, MODEL_GROUPS } from "@/lib/insight/model-catalog";
 import { DEFAULT_STAGE_PROMPTS } from "@/lib/insight/prompts";
@@ -109,6 +109,15 @@ export function StageWorkbench({
   applyCommonToAll,
   resetAllOverrides,
 }: StageWorkbenchProps) {
+  const stageRecordMap = useMemo(
+    () => new Map(stageRecords.map((record) => [record.stage, record] as const)),
+    [stageRecords],
+  );
+  const searchRoundMap = useMemo(
+    () => new Map(searchRounds.map((round) => [round.round, round] as const)),
+    [searchRounds],
+  );
+
   function renderSearchTab(
     round: 1 | 2,
     config: SearchRoundConfig,
@@ -117,7 +126,7 @@ export function StageWorkbench({
     title: string,
     description: string
   ) {
-    const result = searchRounds.find((item) => item.round === round);
+    const result = searchRoundMap.get(round);
     return (
       <div className="stageTabPanel searchTabPanel">
         <div className="stageTabPanelHeader">
@@ -204,7 +213,7 @@ export function StageWorkbench({
     <div className="stageTabs">
       <div className="stageTabStrip">
         {tunedStages.map((stage) => {
-          const record = stageRecords.find((item) => item.stage === stage);
+          const record = stageRecordMap.get(stage);
           const isBusy = runningStage === stage || (isRunning && activeStage === stage);
           return (
             <button
@@ -218,11 +227,11 @@ export function StageWorkbench({
             </button>
           );
         })}
-        <button type="button" className={`stageTab stageTabSearch ${activeTab === "searchR1" ? "stageTabActive" : ""} ${searchRounds.find((item) => item.round === 1 && item.results.length > 0) ? "stageTabDone" : ""}`} onClick={() => setActiveTab("searchR1")}>
+        <button type="button" className={`stageTab stageTabSearch ${activeTab === "searchR1" ? "stageTabActive" : ""} ${searchRoundMap.get(1)?.results.length ? "stageTabDone" : ""}`} onClick={() => setActiveTab("searchR1")}>
           <span className="stageTabNum">🔍</span>
           <span className="stageTabName">Search R1</span>
         </button>
-        <button type="button" className={`stageTab stageTabSearch ${activeTab === "searchR2" ? "stageTabActive" : ""} ${searchRounds.find((item) => item.round === 2 && item.results.length > 0) ? "stageTabDone" : ""}`} onClick={() => setActiveTab("searchR2")}>
+        <button type="button" className={`stageTab stageTabSearch ${activeTab === "searchR2" ? "stageTabActive" : ""} ${searchRoundMap.get(2)?.results.length ? "stageTabDone" : ""}`} onClick={() => setActiveTab("searchR2")}>
           <span className="stageTabNum">🔍</span>
           <span className="stageTabName">Search R2</span>
         </button>
@@ -231,7 +240,7 @@ export function StageWorkbench({
       {tunedStages.map((stage) => {
         if (activeTab !== stage) return null;
         const config = stageConfigs[stage];
-        const record = stageRecords.find((item) => item.stage === stage);
+        const record = stageRecordMap.get(stage);
         const effectiveModel = config.enabled ? getEffectiveModel(config.model, config.customModel) : effectiveCommonModel;
         const effectiveTemperature = config.enabled ? config.temperature : commonTemperature;
         const effectiveMaxTokens = config.enabled ? config.maxTokens : commonMaxTokens;

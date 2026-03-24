@@ -11,6 +11,7 @@ import {
 import {
   buildDecisionBenchmarkFromExecutionRun,
 } from "@/lib/decision/article-benchmark";
+import { splitLines } from "@/lib/decision/panel-utils";
 import type {
   DecisionBenchmarkCase,
   DecisionExecutionRun,
@@ -27,6 +28,8 @@ import {
   type DecisionExecutionComparison,
   type StoredDecisionExecutionRun,
 } from "@/hooks/use-decision-run-history";
+import { useLazyPanelActivation } from "@/hooks/use-lazy-panel-activation";
+import { useLatestRequest } from "@/hooks/use-latest-request";
 
 const STAGE_LABELS: Record<DecisionStageName, string> = {
   task_reframing: "과제 재정의",
@@ -46,14 +49,8 @@ type Props = {
   onApplyInsightHandoff?: (analysisPrompt: string, additionalContext: string[]) => void;
   onBenchmarkCreated?: (benchmark: DecisionBenchmarkCase) => void;
   disabled?: boolean;
+  deferInitialLoad?: boolean;
 };
-
-function splitLines(value: string) {
-  return value
-    .split("\n")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
 
 function buildExecutionRecord(input: {
   task: string;
@@ -85,6 +82,7 @@ export function DecisionExecutionPanel({
   onApplyInsightHandoff,
   onBenchmarkCreated,
   disabled = false,
+  deferInitialLoad = false,
 }: Props) {
   const [task, setTask] = useState(defaultTask);
   const [background, setBackground] = useState(defaultBackground);
@@ -104,17 +102,22 @@ export function DecisionExecutionPanel({
   const [isLoadingSavedRuns, setIsLoadingSavedRuns] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [applyFeedback, setApplyFeedback] = useState<string | null>(null);
+  const { isActivated, activate, panelRef } = useLazyPanelActivation({ defer: deferInitialLoad });
+  const savedRunsRequest = useLatestRequest();
+  const decisionRunRequest = useLatestRequest();
+  const compareRequest = useLatestRequest();
   const { saveDecisionRun: saveLocalDecisionRun, loadDecisionRun } = useDecisionRunHistory({
     decisionHistory,
     setDecisionHistory,
   });
 
   useEffect(() => {
-    let cancelled = false;
+    if (!isActivated) return;
+    const request = savedRunsRequest.begin();
     void (async () => {
       setIsLoadingSavedRuns(true);
-      const runs = await listSavedDecisionRuns();
-      if (cancelled) return;
+      const runs = await listSavedDecisionRuns(request.signal);
+      if (!savedRunsRequest.isCurrent(request.requestId)) return;
       if ("error" in runs) {
         setIsLoadingSavedRuns(false);
         return;
@@ -123,9 +126,10 @@ export function DecisionExecutionPanel({
       setIsLoadingSavedRuns(false);
     })();
     return () => {
-      cancelled = true;
+      if (!savedRunsRequest.isCurrent(request.requestId)) return;
+      savedRunsRequest.cancel();
     };
-  }, []);
+  }, [isActivated]);
 
   const activeWarnings = useMemo(
     () => result?.stages.flatMap((stage) => (stage.warnings ?? []).map((warning) => `${STAGE_LABELS[stage.stage]}: ${warning}`)) ?? [],
@@ -136,13 +140,18 @@ export function DecisionExecutionPanel({
   const benchmarkDraft = useMemo(() => (currentRecord ? buildDecisionBenchmarkFromExecutionRun(currentRecord) : null), [currentRecord]);
 
   async function refreshSavedRuns() {
-    const runs = await listSavedDecisionRuns();
+    if (!isActivated) return;
+    const request = savedRunsRequest.begin();
+    const runs = await listSavedDecisionRuns(request.signal);
+    if (!savedRunsRequest.isCurrent(request.requestId)) return;
     if ("error" in runs) return;
     setSavedRuns(runs);
+    savedRunsRequest.finish(request.requestId);
   }
 
   async function handleRunDecision() {
     if (!task.trim()) return;
+    const request = decisionRunRequest.begin();
     setIsRunning(true);
     setError(null);
     setApplyFeedback(null);
@@ -159,7 +168,9 @@ export function DecisionExecutionPanel({
         modelSettings: decisionModelSettings,
         stagePolicies,
       },
+      request.signal,
     );
+    if (!decisionRunRequest.isCurrent(request.requestId)) return;
 
     if ("error" in run) {
       setError(run.error);
@@ -176,14 +187,17 @@ export function DecisionExecutionPanel({
     saveLocalDecisionRun(record);
 
     const saveResult = await saveDecisionRun(record);
+    if (!decisionRunRequest.isCurrent(request.requestId)) return;
     if ("error" in saveResult) {
       setError(saveResult.error);
     } else {
       setApplyFeedback(`Decision run 저장 완료: ${saveResult.filename}`);
       await refreshSavedRuns();
+      if (!decisionRunRequest.isCurrent(request.requestId)) return;
     }
 
     setIsRunning(false);
+    decisionRunRequest.finish(request.requestId);
   }
 
   async function handleSaveBenchmarkFromRun() {
@@ -234,6 +248,7 @@ export function DecisionExecutionPanel({
       ? selectedCompareKeys.filter((key) => key !== summary.filename)
       : [...selectedCompareKeys, summary.filename].slice(-2);
     setSelectedCompareKeys(nextKeys);
+    compareRequest.cancel();
 
     if (nextKeys.length !== 2) {
       setSelectedFileCompareRuns(null);
@@ -241,7 +256,9 @@ export function DecisionExecutionPanel({
       return;
     }
 
-    const loaded = await Promise.all(nextKeys.map((filename) => loadSavedDecisionRun(filename)));
+    const request = compareRequest.begin();
+    const loaded = await Promise.all(nextKeys.map((filename) => loadSavedDecisionRun(filename, request.signal)));
+    if (!compareRequest.isCurrent(request.requestId)) return;
     if (loaded.some((item) => "error" in item)) {
       setError("선택한 decision run 파일을 불러오지 못했습니다.");
       setSelectedFileCompareRuns(null);
@@ -253,10 +270,16 @@ export function DecisionExecutionPanel({
     setSelectedFileCompareRuns(runs);
     setSelectedFileComparison(compareDecisionExecutionRuns(runs[1], runs[0]));
     setError(null);
+    compareRequest.finish(request.requestId);
   }
 
   return (
-    <section className="decisionExecution panel">
+    <section
+      ref={panelRef}
+      className="decisionExecution panel"
+      onPointerEnter={activate}
+      onFocusCapture={activate}
+    >
       <div className="sectionHeader">
         <div>
           <h2 className="panelTitle">Decision Pipeline Run</h2>
@@ -270,6 +293,8 @@ export function DecisionExecutionPanel({
           {benchmarkDraft ? <span className="summaryPill">benchmark draft ready</span> : null}
         </div>
       </div>
+
+      {!isActivated ? <p className="panelLead">패널이 화면에 들어오면 저장된 decision run 목록을 불러옵니다.</p> : null}
 
       <div className="decisionExecutionGrid">
         <label className="fieldShell">

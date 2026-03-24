@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 declare global {
   interface Window {
@@ -71,9 +71,16 @@ const diagrams: DiagramDef[] = [
   },
 ];
 
+let mermaidLoaderPromise: Promise<void> | null = null;
+
 function loadMermaidScript() {
-  return new Promise<void>((resolve, reject) => {
+  if (mermaidLoaderPromise) {
+    return mermaidLoaderPromise;
+  }
+
+  mermaidLoaderPromise = new Promise<void>((resolve, reject) => {
     if (typeof window === "undefined") {
+      mermaidLoaderPromise = null;
       reject(new Error("window is undefined"));
       return;
     }
@@ -83,10 +90,27 @@ function loadMermaidScript() {
       return;
     }
 
+    const handleFailure = () => {
+      mermaidLoaderPromise = null;
+      reject(new Error("Failed to load mermaid"));
+    };
+
     const existing = document.querySelector<HTMLScriptElement>('script[data-mermaid-loader="true"]');
     if (existing) {
-      existing.addEventListener("load", () => resolve(), { once: true });
-      existing.addEventListener("error", () => reject(new Error("Failed to load mermaid")), { once: true });
+      if (existing.dataset.mermaidLoaded === "true") {
+        resolve();
+        return;
+      }
+      if (existing.dataset.mermaidFailed === "true") {
+        handleFailure();
+        return;
+      }
+      const handleLoad = () => {
+        existing.removeEventListener("error", handleFailure);
+        resolve();
+      };
+      existing.addEventListener("load", handleLoad, { once: true });
+      existing.addEventListener("error", handleFailure, { once: true });
       return;
     }
 
@@ -94,10 +118,31 @@ function loadMermaidScript() {
     script.src = "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js";
     script.async = true;
     script.dataset.mermaidLoader = "true";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error("Failed to load mermaid"));
+    script.onload = () => {
+      script.dataset.mermaidLoaded = "true";
+      resolve();
+    };
+    script.onerror = () => {
+      script.dataset.mermaidFailed = "true";
+      handleFailure();
+    };
     document.head.appendChild(script);
   });
+
+  return mermaidLoaderPromise;
+}
+
+function areSvgMapsEqual(current: Record<string, string>, next: Record<string, string>) {
+  const currentKeys = Object.keys(current);
+  const nextKeys = Object.keys(next);
+
+  if (currentKeys.length !== nextKeys.length) return false;
+
+  for (const key of nextKeys) {
+    if (current[key] !== next[key]) return false;
+  }
+
+  return true;
 }
 
 type Props = {
@@ -108,8 +153,7 @@ export function WorkflowMermaidPanel({ disabled = false }: Props) {
   const [isMermaidReady, setIsMermaidReady] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
   const [svgMap, setSvgMap] = useState<Record<string, string>>({});
-
-  const diagramList = useMemo(() => diagrams, []);
+  const renderIdPrefix = useId().replace(/:/g, "");
 
   useEffect(() => {
     let cancelled = false;
@@ -149,9 +193,9 @@ export function WorkflowMermaidPanel({ disabled = false }: Props) {
       const nextMap: Record<string, string> = {};
       const mermaid = window.mermaid;
       if (!mermaid) return;
-      for (const diagram of diagramList) {
+      for (const diagram of diagrams) {
         try {
-          const { svg } = await mermaid.render(`mermaid-${diagram.id}-${Date.now()}`, diagram.code);
+          const { svg } = await mermaid.render(`mermaid-${renderIdPrefix}-${diagram.id}`, diagram.code);
           nextMap[diagram.id] = svg;
         } catch (error) {
           nextMap[diagram.id] = "";
@@ -161,14 +205,14 @@ export function WorkflowMermaidPanel({ disabled = false }: Props) {
         }
       }
       if (!cancelled) {
-        setSvgMap(nextMap);
+        setSvgMap((current) => (areSvgMapsEqual(current, nextMap) ? current : nextMap));
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [diagramList, isMermaidReady]);
+  }, [isMermaidReady, renderIdPrefix]);
 
   return (
     <section className="workflowMermaid panel">
@@ -188,7 +232,7 @@ export function WorkflowMermaidPanel({ disabled = false }: Props) {
       {renderError ? <p className="errorText">Mermaid render fallback: {renderError}</p> : null}
 
       <div className="workflowMermaidGrid">
-        {diagramList.map((diagram) => {
+        {diagrams.map((diagram) => {
           const svg = svgMap[diagram.id];
           return (
             <article key={diagram.id} className="workflowMermaidCard">

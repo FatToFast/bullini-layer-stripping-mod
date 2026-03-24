@@ -1,60 +1,11 @@
 import { describe, it, expect } from "vitest";
+
+import {
+  isValidationValid,
+  type ValidationResult,
+  validateBenchmarkCase,
+} from "@/lib/decision/benchmark-panel-utils";
 import type { DecisionBenchmarkCase } from "@/lib/decision/types";
-
-// Extract validation logic from benchmark-panel.tsx for testing
-type FieldValidation = {
-  isValid: boolean;
-  message?: string;
-  touched?: boolean;
-};
-
-type ValidationResult = {
-  id: FieldValidation;
-  task: FieldValidation;
-  stakeholders: FieldValidation;
-  successCriteria: FieldValidation;
-  expectedCriteria: FieldValidation;
-};
-
-function validateBenchmarkCase(benchmark: DecisionBenchmarkCase | null): ValidationResult {
-  if (!benchmark) {
-    return {
-      id: { isValid: false, message: "Benchmark를 선택하세요" },
-      task: { isValid: false, message: "" },
-      stakeholders: { isValid: false, message: "" },
-      successCriteria: { isValid: false, message: "" },
-      expectedCriteria: { isValid: false, message: "" },
-    };
-  }
-
-  const idValidation = /^[a-zA-Z0-9_-]+$/;
-  return {
-    id: {
-      isValid: idValidation.test(benchmark.id),
-      message: idValidation.test(benchmark.id) ? undefined : "ID는 영문, 숫자, 밑줄(_), 하이픈(-)만 허용",
-    },
-    task: {
-      isValid: benchmark.input.task.trim().length >= 10,
-      message: benchmark.input.task.trim().length >= 10 ? undefined : "Task는 최소 10자 이상이어야 합니다",
-    },
-    stakeholders: {
-      isValid: (benchmark.input.stakeholders?.length ?? 0) >= 1,
-      message: (benchmark.input.stakeholders?.length ?? 0) >= 1 ? undefined : "최소 1명 이상의 stakeholder가 필요합니다",
-    },
-    successCriteria: {
-      isValid: (benchmark.input.successCriteria?.length ?? 0) >= 1,
-      message: (benchmark.input.successCriteria?.length ?? 0) >= 1 ? undefined : "최소 1개 이상의 성공 기준이 필요합니다",
-    },
-    expectedCriteria: {
-      isValid: benchmark.expectedCriteria.length >= 1,
-      message: benchmark.expectedCriteria.length >= 1 ? undefined : "최소 1개 이상의 예상 기준이 필요합니다",
-    },
-  };
-}
-
-function isValidationValid(validation: ValidationResult): boolean {
-  return Object.values(validation).every((field) => field.isValid);
-}
 
 function createValidBenchmark(overrides?: Partial<DecisionBenchmarkCase>): DecisionBenchmarkCase {
   return {

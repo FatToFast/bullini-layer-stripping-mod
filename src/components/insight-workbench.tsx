@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   runInsightApiStream,
@@ -14,19 +14,27 @@ import { buildDecisionBenchmarkFromCurrentArticle } from "@/lib/decision/article
 import { CUSTOM_MODEL_VALUE, TUNABLE_STAGES } from "@/lib/insight/model-catalog";
 import type { DecisionModelSettings } from "@/lib/decision/types";
 import { DEFAULT_STAGE_PROMPTS } from "@/lib/insight/prompts";
-import type { CachedStageResults, InsightStageName, PipelineModelSettings, StageStatus } from "@/lib/insight/types";
-import { DecisionBenchmarkPanel } from "@/components/decision/benchmark-panel";
-import { DecisionExecutionPanel } from "@/components/decision/execution-panel";
-import { WorkflowMermaidPanel } from "@/components/decision/workflow-mermaid-panel";
+import {
+  appendStageRecordIfMissing,
+  markStageRecordStatus,
+  upsertSearchRound,
+  upsertStageRecord,
+} from "@/lib/insight/state-updaters";
+import type { CachedStageResults, InsightStageName, PipelineModelSettings } from "@/lib/insight/types";
 import { ProducerFlowPanel } from "@/components/decision/producer-flow-panel";
-import { AnalysisHistory } from "@/components/insight/analysis-history";
-import { FinalOutputPanel } from "@/components/insight/final-output-panel";
-import { OutputEditor } from "@/components/insight/output-editor";
 import { PipelineDiagram } from "@/components/insight/pipeline-diagram";
-import { QualityDashboard } from "@/components/insight/quality-dashboard";
 import { RunProfilePanel } from "@/components/insight/run-profile-panel";
-import { SearchRoundsLog } from "@/components/insight/search-rounds-log";
-import { StageWorkbench } from "@/components/insight/stage-workbench";
+import {
+  AnalysisHistory,
+  DecisionBenchmarkPanel,
+  DecisionExecutionPanel,
+  FinalOutputPanel,
+  OutputEditor,
+  QualityDashboard,
+  SearchRoundsLog,
+  StageWorkbench,
+  WorkflowMermaidPanel,
+} from "@/components/insight/lazy-panels";
 import {
   DEFAULT_MAX_TOKENS,
   DEFAULT_TEMPERATURE,
@@ -37,6 +45,7 @@ import {
   usePipelineState,
 } from "@/hooks/use-pipeline-state";
 import { getEventIdFromRawJson, readStoredAnalysis, useAnalysisStorage } from "@/hooks/use-analysis-storage";
+import { isAbortError, useLatestRequest, type LatestRequestToken } from "@/hooks/use-latest-request";
 import { useQualityMetrics } from "@/hooks/use-quality-metrics";
 
 type SearchProviderOption = {
@@ -171,6 +180,10 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
   });
 
   const [savedDecisionBenchmarks, setSavedDecisionBenchmarks] = useState<import("@/lib/decision/types").DecisionBenchmarkCase[]>([]);
+  const copyFeedbackTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const extractRequest = useLatestRequest();
+  const pipelineRequest = useLatestRequest();
+  const stageEvaluationRequest = useLatestRequest();
 
   const qualityMetrics = useQualityMetrics(deferredFinalResult?.finalOutput ?? null, stageRecords);
   const currentArticleBenchmark = useMemo(
@@ -202,6 +215,14 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     if (!abStage) return;
     setAbPromptOverride(stageConfigs[abStage].prompt || DEFAULT_STAGE_PROMPTS[abStage]);
   }, [abStage, setAbPromptOverride, stageConfigs]);
+
+  useEffect(() => {
+    return () => {
+      if (copyFeedbackTimeoutRef.current) {
+        clearTimeout(copyFeedbackTimeoutRef.current);
+      }
+    };
+  }, []);
 
   function buildModelSettings(configs = stageConfigs): PipelineModelSettings {
     const stages = Object.fromEntries(
@@ -367,13 +388,15 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
   async function handleExtract() {
     if (!newsUrl.trim()) return;
+    const request = extractRequest.begin();
     setExtractPhase("fetching");
     setExtractError(null);
     setFetchedText(null);
     setError(null);
 
     try {
-      const fetchResult = await fetchArticleText(newsUrl.trim());
+      const fetchResult = await fetchArticleText(newsUrl.trim(), request.signal);
+      if (!extractRequest.isCurrent(request.requestId)) return;
       if ("error" in fetchResult) {
         setExtractError(fetchResult.error);
         setExtractPhase("error");
@@ -388,7 +411,14 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         temperature: commonTemperature,
         maxTokens: commonMaxTokens,
       };
-      const structureResult = await structureWithLlm(fetchResult.text, analysisPrompt.trim() || undefined, undefined, extractSettings);
+      const structureResult = await structureWithLlm(
+        fetchResult.text,
+        analysisPrompt.trim() || undefined,
+        undefined,
+        extractSettings,
+        request.signal,
+      );
+      if (!extractRequest.isCurrent(request.requestId)) return;
 
       if ("error" in structureResult) {
         setExtractError(structureResult.error);
@@ -399,12 +429,16 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       setRawJson(JSON.stringify(structureResult.dataset, null, 2));
       setExtractPhase("done");
     } catch (caughtError) {
+      if (!extractRequest.isCurrent(request.requestId) || isAbortError(caughtError)) return;
       setExtractError(caughtError instanceof Error ? caughtError.message : "URL 분석에 실패했습니다.");
       setExtractPhase("error");
+    } finally {
+      extractRequest.finish(request.requestId);
     }
   }
 
   function resetExtraction() {
+    extractRequest.cancel();
     setExtractPhase("idle");
     setExtractError(null);
     setFetchedText(null);
@@ -418,6 +452,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
   async function runFullPipeline(
     modelSettings: PipelineModelSettings,
+    request: LatestRequestToken,
     options?: { applyFinalResult?: boolean; persistResult?: boolean; updatePreviousResult?: boolean }
   ) {
     const applyFinalResult = options?.applyFinalResult ?? true;
@@ -425,7 +460,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     const updatePreviousResult = options?.updatePreviousResult ?? true;
     const eventId = getEventIdFromRawJson(rawJson);
 
-    if (updatePreviousResult) {
+    if (updatePreviousResult && pipelineRequest.isCurrent(request.requestId)) {
       setPreviousResult(eventId ? readStoredAnalysis(eventId) : null);
     }
 
@@ -442,44 +477,48 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       modelSettings,
       {
         onStageStart: (stage) => {
+          if (!pipelineRequest.isCurrent(request.requestId)) return;
           startTransition(() => {
             setActiveStage(stage);
-            setStageRecords((prev) => {
-              const existing = prev.find((record) => record.stage === stage);
-              if (existing) return prev;
-              return [...prev, { stage, status: "running", input: null }];
-            });
+            setStageRecords((prev) => appendStageRecordIfMissing(prev, stage));
           });
         },
         onStageComplete: (record) => {
+          if (!pipelineRequest.isCurrent(request.requestId)) return;
           startTransition(() => {
             setActiveStage(record.stage);
-            setStageRecords((prev) => {
-              const next = prev.filter((item) => item.stage !== record.stage);
-              return [...next, record];
-            });
+            setStageRecords((prev) => upsertStageRecord(prev, record));
           });
         },
         onSearchStart: (round, queries) => {
+          if (!pipelineRequest.isCurrent(request.requestId)) return;
           startTransition(() => {
-            setSearchRounds((prev) => [...prev.filter((item) => item.round !== round), { round, queries, results: [] }]);
+            setSearchRounds((prev) => upsertSearchRound(prev, { round, queries, results: [] }));
           });
         },
         onSearchComplete: (round, results, searchError) => {
+          if (!pipelineRequest.isCurrent(request.requestId)) return;
           startTransition(() => {
-            setSearchRounds((prev) => [
-              ...prev.filter((item) => item.round !== round),
-              { round, queries: prev.find((item) => item.round === round)?.queries ?? [], results, error: searchError },
-            ]);
+            setSearchRounds((prev) => {
+              const previousRound = prev.find((item) => item.round === round);
+              return upsertSearchRound(prev, {
+                round,
+                queries: previousRound?.queries ?? [],
+                results,
+                error: searchError,
+              });
+            });
           });
         },
         onComplete: (completed) => {
+          if (!pipelineRequest.isCurrent(request.requestId)) return;
           startTransition(() => {
             if (applyFinalResult) setFinalResult(completed);
             setActiveStage(null);
           });
         },
         onError: (message) => {
+          if (!pipelineRequest.isCurrent(request.requestId)) return;
           startTransition(() => setError(message));
         },
       },
@@ -487,22 +526,28 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       undefined,
       undefined,
       systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined,
-      buildSearchConfigs()
+      buildSearchConfigs(),
+      request.signal,
     );
 
+    if (!pipelineRequest.isCurrent(request.requestId)) return null;
     if (applyFinalResult) setFinalResult(result);
     if (persistResult && result.finalOutput) saveAnalysis(result.finalOutput);
     return result;
   }
 
   async function handleRun() {
+    const request = pipelineRequest.begin();
     setIsRunning(true);
+    setRunningStage(null);
     setAbResult(null);
     try {
-      await runFullPipeline(buildModelSettings());
+      await runFullPipeline(buildModelSettings(), request);
     } catch (caughtError) {
+      if (!pipelineRequest.isCurrent(request.requestId) || isAbortError(caughtError)) return;
       setError(caughtError instanceof Error ? caughtError.message : "분석 실행에 실패했습니다.");
     } finally {
+      if (!pipelineRequest.finish(request.requestId)) return;
       setIsRunning(false);
       setActiveStage(null);
     }
@@ -510,24 +555,31 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
   async function handleRunAB() {
     if (!abStage || !abPromptOverride.trim()) return;
+    const request = pipelineRequest.begin();
     setAbRunning(true);
     setIsRunning(true);
+    setRunningStage(null);
     setAbResult(null);
 
     try {
-      const resultA = await runFullPipeline(buildModelSettings());
+      const resultA = await runFullPipeline(buildModelSettings(), request);
+      if (!resultA || !pipelineRequest.isCurrent(request.requestId)) return;
       const resultB = await runFullPipeline(
         buildModelSettings({
           ...stageConfigs,
           [abStage]: { ...stageConfigs[abStage], enabled: true, prompt: abPromptOverride },
         }),
+        request,
         { applyFinalResult: false, persistResult: false, updatePreviousResult: false }
       );
+      if (!resultB || !pipelineRequest.isCurrent(request.requestId)) return;
       setAbResult(resultB);
       setFinalResult(resultA);
     } catch (caughtError) {
+      if (!pipelineRequest.isCurrent(request.requestId) || isAbortError(caughtError)) return;
       setError(caughtError instanceof Error ? caughtError.message : "A/B 비교 실행에 실패했습니다.");
     } finally {
+      if (!pipelineRequest.finish(request.requestId)) return;
       setAbRunning(false);
       setIsRunning(false);
       setActiveStage(null);
@@ -546,7 +598,10 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
 
   async function handleRunStage(targetStage: InsightStageName) {
     if (!rawJson.trim()) return;
+    const request = pipelineRequest.begin();
     setRunningStage(targetStage);
+    setIsRunning(false);
+    setAbRunning(false);
     setError(null);
     setActiveStage(targetStage);
 
@@ -556,46 +611,48 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         buildModelSettings(),
         {
           onStageStart: (stage) => {
+            if (!pipelineRequest.isCurrent(request.requestId)) return;
             startTransition(() => {
               setActiveStage(stage);
-              setStageRecords((prev) => {
-                const existing = prev.find((record) => record.stage === stage);
-                if (existing) {
-                  return prev.map((record) => record.stage === stage ? { ...record, status: "running" as StageStatus } : record);
-                }
-                return [...prev, { stage, status: "running" as StageStatus, input: null }];
-              });
+              setStageRecords((prev) => markStageRecordStatus(prev, stage, "running"));
             });
           },
           onStageComplete: (record) => {
+            if (!pipelineRequest.isCurrent(request.requestId)) return;
             startTransition(() => {
               setActiveStage(record.stage);
-              setStageRecords((prev) => {
-                const next = prev.filter((item) => item.stage !== record.stage);
-                return [...next, record];
-              });
+              setStageRecords((prev) => upsertStageRecord(prev, record));
             });
           },
           onSearchStart: (round, queries) => {
+            if (!pipelineRequest.isCurrent(request.requestId)) return;
             startTransition(() => {
-              setSearchRounds((prev) => [...prev.filter((item) => item.round !== round), { round, queries, results: [] }]);
+              setSearchRounds((prev) => upsertSearchRound(prev, { round, queries, results: [] }));
             });
           },
           onSearchComplete: (round, results, searchError) => {
+            if (!pipelineRequest.isCurrent(request.requestId)) return;
             startTransition(() => {
-              setSearchRounds((prev) => [
-                ...prev.filter((item) => item.round !== round),
-                { round, queries: prev.find((item) => item.round === round)?.queries ?? [], results, error: searchError },
-              ]);
+              setSearchRounds((prev) => {
+                const previousRound = prev.find((item) => item.round === round);
+                return upsertSearchRound(prev, {
+                  round,
+                  queries: previousRound?.queries ?? [],
+                  results,
+                  error: searchError,
+                });
+              });
             });
           },
           onComplete: (completed) => {
+            if (!pipelineRequest.isCurrent(request.requestId)) return;
             startTransition(() => {
               if (completed.finalOutput) setFinalResult(completed);
               setActiveStage(null);
             });
           },
           onError: (message) => {
+            if (!pipelineRequest.isCurrent(request.requestId)) return;
             startTransition(() => setError(message));
           },
         },
@@ -603,13 +660,17 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         targetStage,
         buildCachedResults(),
         systemPrompt !== defaultSystemPrompt ? systemPrompt : undefined,
-        buildSearchConfigs()
+        buildSearchConfigs(),
+        request.signal,
       );
 
+      if (!pipelineRequest.isCurrent(request.requestId)) return;
       if (result?.finalOutput) setFinalResult(result);
     } catch (caughtError) {
+      if (!pipelineRequest.isCurrent(request.requestId) || isAbortError(caughtError)) return;
       setError(caughtError instanceof Error ? caughtError.message : "Stage 실행에 실패했습니다.");
     } finally {
+      if (!pipelineRequest.finish(request.requestId)) return;
       setRunningStage(null);
       setActiveStage(null);
     }
@@ -619,6 +680,7 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
     const record = stageRecords.find((item) => item.stage === stage);
     if (!record?.output) return;
 
+    const request = stageEvaluationRequest.begin();
     setEvaluatingStage(stage);
     const config = stageConfigs[stage];
     const stagePrompt = config.enabled ? config.prompt : DEFAULT_STAGE_PROMPTS[stage];
@@ -627,13 +689,15 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
       model: getEffectiveModel(commonModel, commonCustomModel),
       temperature: 0.1,
       maxTokens: 3000,
-    });
+    }, request.signal);
 
+    if (!stageEvaluationRequest.isCurrent(request.requestId)) return;
     if ("error" in result) {
       setError(result.error);
     } else {
       setStageEvaluations((prev) => ({ ...prev, [stage]: result }));
     }
+    if (!stageEvaluationRequest.finish(request.requestId)) return;
     setEvaluatingStage(null);
   }
 
@@ -648,8 +712,14 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         : `${output.oneLineTake} #투자분석`;
 
     navigator.clipboard.writeText(textToCopy).then(() => {
+      if (copyFeedbackTimeoutRef.current) {
+        clearTimeout(copyFeedbackTimeoutRef.current);
+      }
       setCopyFeedback("복사됨!");
-      setTimeout(() => setCopyFeedback(null), 2000);
+      copyFeedbackTimeoutRef.current = setTimeout(() => {
+        setCopyFeedback(null);
+        copyFeedbackTimeoutRef.current = null;
+      }, 2000);
     });
   }
 
@@ -723,32 +793,36 @@ export function InsightWorkbench({ defaultModel, providerLabel, searchProviders,
         />
       </section>
 
-      {!hasRawJson && (
+      {!hasRawJson ? (
         <section className="decisionPrerequisiteNotice">
           <div className="prerequisiteCard">
             <h3>Decision Flow 사용 안내</h3>
-            <p>Decision Flow, Benchmark, Execution 패널을 사용하려면 먼저 <strong>News URL에서 데이터를 추출</strong>하거나 <strong>샘플을 선택</strong>해야 합니다.</p>
+            <p>
+              저장된 Benchmark를 불러오거나 Decision Execution을 수동으로 실행하는 기능은 지금도 사용할 수 있습니다.
+              다만 <strong>rawJson을 불러오면 기사 기반 scenario가 더 풍부해지고</strong>,
+              <strong> decision handoff를 rawJson에 직접 합치는 기능</strong>도 사용할 수 있습니다.
+            </p>
           </div>
         </section>
-      )}
+      ) : null}
 
       <ProducerFlowPanel disabled={!hasRawJson} />
       <DecisionBenchmarkPanel
-        disabled={!hasRawJson}
         decisionModelSettings={decisionModelSettings}
         onApplySuggestedSettings={handleApplyDecisionSuggestedSettings}
         currentArticleBenchmark={currentArticleBenchmark}
         externalBenchmarks={savedDecisionBenchmarks}
+        deferInitialLoad
       />
       <WorkflowMermaidPanel disabled={!hasRawJson} />
       <DecisionExecutionPanel
-        disabled={!hasRawJson}
         decisionModelSettings={decisionModelSettings}
         defaultTask={analysisPrompt}
         defaultBackground={newsUrl ? `기사 URL: ${newsUrl}` : ""}
         defaultContext={rawJson ? ["현재 rawJson이 로드되어 있음", `입력 길이: ${rawJson.length} chars`] : []}
         onApplyInsightHandoff={handleApplyDecisionInsightHandoff}
         onBenchmarkCreated={handleBenchmarkCreated}
+        deferInitialLoad
       />
 
       <PipelineDiagram activeTab={activeTab} setActiveTab={setActiveTab} searchRounds={searchRounds} stageRecords={stageRecords} />
